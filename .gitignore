@@ -1,0 +1,20 @@
+# Downloaded gesture model (~8 MB) - fetch with the command in README
+gesture_recognizer.task
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+env/
+
+# Local scratch / diagnostic artifacts
+_*.png
+_*.py
+*.log
+
+# OS cruft
+Thumbs.db
+desktop.ini
+.DS_Store

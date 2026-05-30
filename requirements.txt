@@ -1,0 +1,6 @@
+mediapipe
+pyautogui
+windows-capture
+pygrabber
+pillow
+numpy
