@@ -21,7 +21,7 @@ from windows_capture import WindowsCapture, Frame, InternalCaptureControl
 
 WINDOW_NAME = "PhoneCam"   # scrcpy window title to capture
 DEFAULT_SIZE = 200
-FPS = 24
+FPS = 15                  # render rate (lower = less CPU; 15 looks fine for a webcam bubble)
 BORDER_WIDTH = 2
 BORDER_COLOR = (80, 80, 80)
 SIZES = [120, 160, 200, 260, 320]

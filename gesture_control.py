@@ -26,7 +26,9 @@ from windows_capture import WindowsCapture, Frame, InternalCaptureControl
 WINDOW_NAME   = "PhoneCam"
 MODEL_PATH    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gesture_recognizer.task")
 MIN_SCORE     = 0.45     # min confidence to accept a gesture (lower = catches marginal palms faster)
-STABLE_FRAMES = 4        # gesture must persist this many frames before it fires
+STABLE_FRAMES = 3        # gesture must persist this many frames before it fires
+INFER_FPS     = 15       # cap gesture recognition to this many frames/sec (big CPU saver; 30 not needed)
+INFER_WIDTH   = 640      # downscale frames to this width before recognition (CPU saver)
 COOLDOWN      = 1.2      # seconds before the same tap action can fire again
 MAX_HOLD      = 120      # safety: hard cap - auto-release any latched key after N seconds
 NOHAND_RELEASE = 45      # safety: release latched keys after N seconds with NO gesture seen
@@ -236,65 +238,20 @@ def main():
     last_stream = 0.0
     last_palm = 0.0             # time the palm was last seen (opens the HOLD_WINDOW)
     last_dbg = 0.0
+    last_infer = 0.0
+    infer_period = 1.0 / INFER_FPS
     try:
         while True:
-            frame = grab.get()
-            if frame is None:
-                time.sleep(0.02)
-                if time.time() - last_hb >= 3:
-                    log(f"[hb] waiting for frames... frames_in={grab.count} closed={grab.closed}")
-                    last_hb = time.time()
-                continue
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            ts += 33
-            try:
-                res = recognizer.recognize_for_video(mp_img, ts)
-            except Exception as e:
-                log(f"recognize error: {e}")
-                time.sleep(0.05); continue
-            loops += 1
+            now = time.time()
 
-            # Scan ALL detected hands and take the best NAMED gesture. This fixes the
-            # multi-hand slot bug: with num_hands>1 the real gesture can land in any slot,
-            # so reading only slot 0 missed it whenever a second hand was present.
-            g = "None"
-            score = 0.0
-            for hand_gestures in (res.gestures or []):
-                if not hand_gestures:
-                    continue
-                cat = hand_gestures[0]
-                if cat.category_name not in ("None", "") and cat.score >= MIN_SCORE and cat.score > score:
-                    g, score = cat.category_name, cat.score
-
-            if DEBUG:
-                tnow = time.time()
-                if tnow - last_dbg > 0.3:
-                    raws = [f"{hg[0].category_name}:{hg[0].score:.2f}" for hg in (res.gestures or []) if hg]
-                    log(f"[dbg] hands={len(res.gestures or [])} raw=[{', '.join(raws)}] accepted={g}")
-                    last_dbg = tnow
-
-            if g == prev:
-                stable += 1
-            else:
-                prev, stable, fired = g, 1, False
-
-            if g != "None":
-                last_active = time.time()
-
-            # --- hold-mode dictation: a palm opens/extends a HOLD_WINDOW-second recording window ---
-            # Showing the palm (re)sets the timer; SPACE streams while the window is open. The
-            # window auto-closes HOLD_WINDOW s after the last palm - NO fist required, so a missed
-            # fist can never leave space stuck. Fist/thumbs just close it early.
+            # --- SPACE stream runs EVERY loop (decoupled from inference) so it stays ~20/sec
+            #     even though we only recognize gestures at INFER_FPS to save CPU ---
             if DICTATION_MODE == "hold":
-                now_s = time.time()
-                if g == "Open_Palm":
-                    last_palm = now_s                       # (re)open the window
-                window_open = (now_s - last_palm) < HOLD_WINDOW
+                window_open = (now - last_palm) < HOLD_WINDOW
                 if window_open:
-                    if now_s - last_stream >= STREAM_INTERVAL:
+                    if now - last_stream >= STREAM_INTERVAL:
                         if not DRY: pyautogui.press(STREAM_KEY)
-                        last_stream = now_s
+                        last_stream = now
                     if not streaming:
                         streaming = True
                         log(f"dictation ON - {int(HOLD_WINDOW)}s window; re-show palm to extend")
@@ -302,33 +259,78 @@ def main():
                     streaming = False
                     log("dictation OFF (window closed - words transcribed; thumbs-up to send)")
 
-            # --- gesture transitions (fire once per gesture streak) ---
-            if stable >= STABLE_FRAMES and not fired and g != "None":
-                fired = True
-                if DICTATION_MODE == "hold":
-                    if g == "Closed_Fist":
-                        if streaming:
-                            last_palm = 0.0                 # pause recording (does NOT send)
-                            log("PAUSE (fist) - not sent; palm to keep talking")
-                        else:
-                            for _ in range(NEWLINE_COUNT):  # paused fist = newline(s)
-                                if not DRY: pyautogui.hotkey(*NEWLINE_KEYS)
-                            log(f"newline x{NEWLINE_COUNT} (fist while paused)")
-                    elif g == "Thumb_Up":
-                        if streaming:
-                            last_palm = 0.0                 # pause first; never sends mid-recording
-                            log("PAUSE (thumbs) - thumbs-up again to SEND")
-                        else:
-                            if not DRY: pyautogui.press("enter")
-                            log("SEND (Enter)")
-                    elif g != "Open_Palm":
-                        dispatch(g)   # Victory -> snipping tool, etc.
+            # --- gesture recognition: throttled to INFER_FPS + downscaled (the CPU saver) ---
+            if now - last_infer >= infer_period:
+                last_infer = now
+                frame = grab.get()
+                if frame is None:
+                    if now - last_hb >= 3:
+                        log(f"[hb] waiting for frames... frames_in={grab.count} closed={grab.closed}")
+                        last_hb = now
                 else:
-                    log(f"detected: {g} ({score:.2f})" + (f" -> {BINDINGS[g]['desc']}" if g in BINDINGS else "  (unbound)"))
-                    dispatch(g)
+                    h, w = frame.shape[:2]
+                    if INFER_WIDTH and w > INFER_WIDTH:                  # downscale -> cheaper inference
+                        frame = cv2.resize(frame, (INFER_WIDTH, int(h * INFER_WIDTH / w)), interpolation=cv2.INTER_AREA)
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                    ts += int(infer_period * 1000) + 1
+                    try:
+                        res = recognizer.recognize_for_video(mp_img, ts)
+                    except Exception as e:
+                        log(f"recognize error: {e}")
+                        res = None
+
+                    if res is not None:
+                        loops += 1
+                        # Scan ALL detected hands; take the best NAMED gesture (multi-hand slot fix).
+                        g = "None"; score = 0.0
+                        for hand_gestures in (res.gestures or []):
+                            if not hand_gestures:
+                                continue
+                            cat = hand_gestures[0]
+                            if cat.category_name not in ("None", "") and cat.score >= MIN_SCORE and cat.score > score:
+                                g, score = cat.category_name, cat.score
+
+                        if DEBUG and now - last_dbg > 0.3:
+                            raws = [f"{hg[0].category_name}:{hg[0].score:.2f}" for hg in (res.gestures or []) if hg]
+                            log(f"[dbg] hands={len(res.gestures or [])} raw=[{', '.join(raws)}] accepted={g}")
+                            last_dbg = now
+
+                        if g == prev:
+                            stable += 1
+                        else:
+                            prev, stable, fired = g, 1, False
+                        if g != "None":
+                            last_active = now
+                        if DICTATION_MODE == "hold" and g == "Open_Palm":
+                            last_palm = now                             # (re)open the window
+
+                        # --- gesture transitions (fire once per gesture streak) ---
+                        if stable >= STABLE_FRAMES and not fired and g != "None":
+                            fired = True
+                            if DICTATION_MODE == "hold":
+                                if g == "Closed_Fist":
+                                    if streaming:
+                                        last_palm = 0.0                 # pause recording (does NOT send)
+                                        log("PAUSE (fist) - not sent; palm to keep talking")
+                                    else:
+                                        for _ in range(NEWLINE_COUNT):  # paused fist = newline(s)
+                                            if not DRY: pyautogui.hotkey(*NEWLINE_KEYS)
+                                        log(f"newline x{NEWLINE_COUNT} (fist while paused)")
+                                elif g == "Thumb_Up":
+                                    if streaming:
+                                        last_palm = 0.0                 # pause first; never sends mid-recording
+                                        log("PAUSE (thumbs) - thumbs-up again to SEND")
+                                    else:
+                                        if not DRY: pyautogui.press("enter")
+                                        log("SEND (Enter)")
+                                elif g != "Open_Palm":
+                                    dispatch(g)   # Victory -> snipping tool, etc.
+                            else:
+                                log(f"detected: {g} ({score:.2f})" + (f" -> {BINDINGS[g]['desc']}" if g in BINDINGS else "  (unbound)"))
+                                dispatch(g)
 
             # safety auto-release of latched keys
-            now = time.time()
             if held and now - last_active > NOHAND_RELEASE:
                 log(f"safety: no gesture for {NOHAND_RELEASE}s -> releasing latched keys")
                 release_all()
@@ -338,13 +340,13 @@ def main():
                     del held[key]
                     log(f"safety: auto-released '{key}' after {MAX_HOLD}s")
 
-            # heartbeat every 3s: proves the loop + frame feed are alive
+            # heartbeat every 3s
             if now - last_hb >= 3:
                 fps = (grab.count - last_count) / (now - last_hb)
-                log(f"[hb] alive  frames_in={grab.count} ({fps:.0f}/s)  processed={loops}  current={prev}  held={list(held)}")
+                log(f"[hb] alive  frames_in={grab.count} ({fps:.0f}/s)  infer={loops}  current={prev}  held={list(held)}")
                 last_hb, last_count = now, grab.count
 
-            time.sleep(0.015)
+            time.sleep(0.008)
     except KeyboardInterrupt:
         pass
     finally:

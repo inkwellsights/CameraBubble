@@ -2,7 +2,7 @@
 #   GestureControl.bat            (live: actually presses keys)
 #   GestureControl.bat --dry      (test: logs detections, presses nothing)
 $ErrorActionPreference = "Stop"
-$Res = "1920x1080"; $Fps = "30"; $CameraId = "0"; $ConnectAddr = ""
+$Res = "1280x720"; $Fps = "30"; $CameraId = "0"; $ConnectAddr = ""
 
 $scrcpy = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter scrcpy.exe -ErrorAction SilentlyContinue |
           Select-Object -First 1 -ExpandProperty FullName

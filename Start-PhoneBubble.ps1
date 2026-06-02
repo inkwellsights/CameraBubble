@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # --- tweakables ---
-$Res = "1920x1080"   # "3840x2160" for 4K (bubble only needs modest res)
+$Res = "1280x720"    # bubble only needs modest res; lower = less CPU. "3840x2160" for 4K.
 $Fps = "30"
 $ConnectAddr = $Connect   # pass -Connect IP:port if Wi-Fi auto-reconnect fails
 

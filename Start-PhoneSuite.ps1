@@ -3,7 +3,7 @@
 #   PhoneSuite.bat --dry      (gesture engine logs only, no keypresses)
 # Starts: hidden scrcpy feed + bubble (no console) + gesture engine (this console).
 $ErrorActionPreference = "Stop"
-$Res = "1920x1080"; $Fps = "30"; $CameraId = "0"; $ConnectAddr = ""
+$Res = "1280x720"; $Fps = "30"; $CameraId = "0"; $ConnectAddr = ""
 
 # --- locate scrcpy + bundled adb ---
 $scrcpy = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -Filter scrcpy.exe -ErrorAction SilentlyContinue |
