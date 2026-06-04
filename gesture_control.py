@@ -29,6 +29,9 @@ MIN_SCORE     = 0.45     # min confidence to accept a gesture (lower = catches m
 STABLE_FRAMES = 3        # gesture must persist this many frames before it fires
 INFER_FPS     = 15       # cap gesture recognition to this many frames/sec (big CPU saver; 30 not needed)
 INFER_WIDTH   = 640      # downscale frames to this width before recognition (CPU saver)
+PAUSE_GESTURE = "Thumb_Down"  # toggles ALL scanning on/off (freeze, so you can move your hands freely).
+                              # Same gesture freezes AND resumes - the engine keeps watching for THIS
+                              # one even while frozen. Options: Thumb_Down, ILoveYou, Pointing_Up.
 COOLDOWN      = 1.2      # seconds before the same tap action can fire again
 MAX_HOLD      = 120      # safety: hard cap - auto-release any latched key after N seconds
 NOHAND_RELEASE = 45      # safety: release latched keys after N seconds with NO gesture seen
@@ -211,12 +214,13 @@ def main():
     print("  Show these to the phone camera:")
     if DICTATION_MODE == "hold":
         print(f"    Open_Palm    -> talk for {int(HOLD_WINDOW)}s (re-show palm to extend)")
-        print("    Closed_Fist  -> PAUSE; (when paused) insert newline")
-        print("    Thumb_Up     -> PAUSE; (when paused) SEND")
+        print("    Closed_Fist  -> stop recording; (when stopped) newline")
+        print("    Thumb_Up     -> stop recording; (when stopped) SEND")
         print("    Victory      -> Snipping tool")
     else:
         for g, s in BINDINGS.items():
             print(f"    {g:<12} -> {s['desc']}")
+    print(f"    {PAUSE_GESTURE:<12} -> FREEZE / UNFREEZE all scanning")
     print("  Ctrl+C to quit.")
     print("=" * 56)
 
@@ -240,6 +244,7 @@ def main():
     last_dbg = 0.0
     last_infer = 0.0
     infer_period = 1.0 / INFER_FPS
+    paused = False              # when True, all gesture actions are frozen (toggle with PAUSE_GESTURE)
     try:
         while True:
             now = time.time()
@@ -247,7 +252,7 @@ def main():
             # --- SPACE stream runs EVERY loop (decoupled from inference) so it stays ~20/sec
             #     even though we only recognize gestures at INFER_FPS to save CPU ---
             if DICTATION_MODE == "hold":
-                window_open = (now - last_palm) < HOLD_WINDOW
+                window_open = (not paused) and (now - last_palm) < HOLD_WINDOW
                 if window_open:
                     if now - last_stream >= STREAM_INTERVAL:
                         if not DRY: pyautogui.press(STREAM_KEY)
@@ -302,13 +307,22 @@ def main():
                             prev, stable, fired = g, 1, False
                         if g != "None":
                             last_active = now
-                        if DICTATION_MODE == "hold" and g == "Open_Palm":
+                        if DICTATION_MODE == "hold" and not paused and g == "Open_Palm":
                             last_palm = now                             # (re)open the window
 
                         # --- gesture transitions (fire once per gesture streak) ---
                         if stable >= STABLE_FRAMES and not fired and g != "None":
                             fired = True
-                            if DICTATION_MODE == "hold":
+                            if g == PAUSE_GESTURE:                      # freeze/unfreeze everything
+                                paused = not paused
+                                if paused:
+                                    last_palm = 0.0                     # close any open dictation window
+                                    log(f"*** SCANNING PAUSED *** (show {PAUSE_GESTURE} again to resume)")
+                                else:
+                                    log("*** SCANNING RESUMED ***")
+                            elif paused:
+                                pass                                    # ignore every other gesture while paused
+                            elif DICTATION_MODE == "hold":
                                 if g == "Closed_Fist":
                                     if streaming:
                                         last_palm = 0.0                 # pause recording (does NOT send)
@@ -343,7 +357,8 @@ def main():
             # heartbeat every 3s
             if now - last_hb >= 3:
                 fps = (grab.count - last_count) / (now - last_hb)
-                log(f"[hb] alive  frames_in={grab.count} ({fps:.0f}/s)  infer={loops}  current={prev}  held={list(held)}")
+                state = " [FROZEN]" if paused else ""
+                log(f"[hb] alive  frames_in={grab.count} ({fps:.0f}/s)  infer={loops}  current={prev}{state}")
                 last_hb, last_count = now, grab.count
 
             time.sleep(0.008)
