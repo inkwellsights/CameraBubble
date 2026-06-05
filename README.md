@@ -14,7 +14,9 @@ OpenCV, and [windows-capture](https://github.com/NiiightmareXD/windows-capture).
 | **`PhoneBubble.bat`** | Phone rear camera as a draggable, always-on-top circular bubble |
 | **`GestureControl.bat`** | Hand gestures → keystrokes (drives Claude Code `/voice`) |
 | **`PhoneSuite.bat`** | Bubble **+** gesture control together, one launch |
-| `PhoneCam.bat` | Just the raw scrcpy camera window (for OBS, etc.) |
+| **`PhoneWebcam.bat`** | Phone as a virtual webcam (Meet, Zoom, WhatsApp, Telegram, Discord…) |
+| **`PhoneFeed.bat`** | Just the hidden feed, for streaming/recording in OBS |
+| `SetRotation.bat` | Set camera rotation (also asked at every launch) |
 | `Stop-PhoneSuite.bat` | Stop everything |
 | `mirror.py` | Standalone webcam-bubble (any DirectShow camera) |
 
@@ -84,13 +86,40 @@ PhoneSuite.bat
 | Gesture | Action |
 |---|---|
 | ✋ Open palm | Talk — opens a 30s recording window; re-show palm to extend |
-| ✊ Fist | Pause recording; **when paused**, insert a newline |
-| 👍 Thumbs up | Pause recording; **when paused**, send (Enter) |
+| ✊ Fist | Stop recording; **when stopped**, insert a newline |
+| 👍 Thumbs up | Stop recording; **when stopped**, send (Enter) |
 | ✌️ Victory | Snipping tool (Win+Shift+S) |
+| 👎 Thumbs down | Freeze / unfreeze all gesture scanning (move your hands freely) |
 
 Sending is always a deliberate thumbs-up on a paused prompt — nothing auto-sends mid-dictation.
 Everything is configurable at the top of `gesture_control.py` (`DICTATION_MODE`, `HOLD_WINDOW`,
-`BINDINGS`, `NEWLINE_KEYS`, …).
+`BINDINGS`, `NEWLINE_KEYS`, `PAUSE_GESTURE`, …).
+
+## Use it as a webcam (video calls)
+
+```
+PhoneWebcam.bat          # asks rotation + rear/front, then exposes "OBS Virtual Camera"
+```
+In Meet / Zoom / WhatsApp / Telegram / Discord, pick **"OBS Virtual Camera"** as the camera.
+Feeds the phone into a virtual camera via `pyvirtualcam` (OBS Virtual Camera backend — OBS must be
+installed but does **not** need to be running).
+
+## Stream / record in OBS
+
+Don't use `PhoneWebcam.bat` here (it and OBS both want the virtual camera). Instead:
+```
+PhoneFeed.bat            # starts just the hidden phone feed
+```
+Then in OBS: **Sources → + → Window Capture → `[scrcpy.exe]: PhoneCam`**, and set
+**Capture Method = "Windows 10 (1903 and up)"** (BitBlt shows black). Now stream/record normally —
+and hit **Start Virtual Camera** in OBS if you also want your whole scene on a call.
+
+## Camera rotation
+
+Every launcher asks at startup (`[1] 0  [2] 90  [3] 180  [4] 270  [5] mirror`) and remembers your
+choice in `rotation.txt` (one keypress after the first time). It's applied at the source via
+scrcpy `--capture-orientation`, so it corrects the bubble, gestures, webcam, and OBS feed together.
+Set it directly anytime with `SetRotation.bat 180`.
 
 ## Notes
 

@@ -1,6 +1,9 @@
 # Downloaded gesture model (~8 MB) - fetch with the command in README
 gesture_recognizer.task
 
+# Per-mount camera rotation (local setting)
+rotation.txt
+
 # Python
 __pycache__/
 *.pyc

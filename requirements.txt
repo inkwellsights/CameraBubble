@@ -4,3 +4,4 @@ windows-capture
 pygrabber
 pillow
 numpy
+pyvirtualcam

@@ -11,6 +11,7 @@ $scrcpy = Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Recurse -
 if (-not $scrcpy) { Write-Host "scrcpy not found. Run: winget install Genymobile.scrcpy" -ForegroundColor Red; Read-Host "Enter to exit"; exit 1 }
 $dir = Split-Path $scrcpy
 $env:ADB = Join-Path $dir "adb.exe"
+$Rotate = & "$PSScriptRoot\Get-Rotation.ps1"   # asks at startup, remembers your choice
 
 # --- ensure phone reachable over Wi-Fi (mDNS auto, else prompt) ---
 & $env:ADB start-server | Out-Null
@@ -31,7 +32,7 @@ while (-not $connected) {
 if (-not (Get-Process scrcpy -ErrorAction SilentlyContinue)) {
     Start-Process -FilePath $scrcpy -ArgumentList `
         "--video-source=camera","--camera-id=$CameraId","--camera-size=$Res","--camera-fps=$Fps",`
-        "--no-audio","--window-borderless","--window-title=PhoneCam","--window-x=5000","--window-y=5000"
+        "--no-audio","--window-borderless","--window-title=PhoneCam","--window-x=5000","--window-y=5000","--capture-orientation=$Rotate"
     Start-Sleep -Seconds 5
 }
 
