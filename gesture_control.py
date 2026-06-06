@@ -265,7 +265,7 @@ def main():
     pinch_latched = False       # pinch currently closed (for rising-edge toggle detection)
     neutral_pitch = None        # finger pitch captured as the "rest" point when scroll mode starts
     scroll_accum = 0.0          # fractional scroll carry-over
-    last_hand = now             # last time a hand was seen (for scroll-mode auto-exit)
+    last_hand = time.time()     # last time a hand was seen (for scroll-mode auto-exit)
     last_sdbg = 0.0             # scroll debug throttle
     try:
         while True:
