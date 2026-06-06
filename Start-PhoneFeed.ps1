@@ -39,19 +39,7 @@ if (-not $CameraId) {
 }
 
 # --- ensure phone reachable (mDNS auto, else prompt) ---
-& $env:ADB start-server | Out-Null
-if ($Connect) { & $env:ADB connect $Connect | Out-Null }
-function Test-Online { (& $env:ADB devices) | Select-String "device$" }
-$connected = $false
-for ($i = 0; $i -lt 5; $i++) { if (Test-Online) { $connected = $true; break }; Start-Sleep -Milliseconds 700 }
-while (-not $connected) {
-    Write-Host "Phone not auto-detected. Turn on Wireless debugging (same Wi-Fi)." -ForegroundColor Yellow
-    $addr = Read-Host "Enter IP:port  |  Enter = retry  |  q = quit"
-    if ($addr -eq 'q') { exit 1 }
-    if ($addr) { & $env:ADB connect $addr | Out-Null }
-    Start-Sleep -Milliseconds 1000
-    if (Test-Online) { $connected = $true }
-}
+. "$PSScriptRoot\Connect-Phone.ps1"
 
 # --- start the hidden phone feed (off-screen; OBS Window Capture grabs it via WGC) ---
 Get-Process scrcpy -ErrorAction SilentlyContinue | Stop-Process -Force

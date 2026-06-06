@@ -4,6 +4,9 @@ gesture_recognizer.task
 # Per-mount camera rotation (local setting)
 rotation.txt
 
+# Saved phone connect address from pairing (local, per-network)
+phone_addr.txt
+
 # Python
 __pycache__/
 *.pyc

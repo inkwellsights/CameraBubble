@@ -42,29 +42,7 @@ $env:ADB = Join-Path $dir "adb.exe"
 $Rotate = & "$PSScriptRoot\Get-Rotation.ps1"   # asks at startup, remembers your choice
 
 # --- ensure phone reachable over Wi-Fi ---
-& $env:ADB start-server | Out-Null
-if ($ConnectAddr) { & $env:ADB connect $ConnectAddr | Out-Null }
-
-function Test-Online { (& $env:ADB devices) | Select-String "device$" }
-
-# Try mDNS auto-discovery (works whenever Wireless debugging is ON and this PC is paired).
-$connected = $false
-for ($i = 0; $i -lt 5; $i++) {
-    if (Test-Online) { $connected = $true; break }
-    Start-Sleep -Milliseconds 700
-}
-
-# Fallback: ask for the IP:port shown on the phone's Wireless debugging screen.
-while (-not $connected) {
-    Write-Host ""
-    Write-Host "Phone not auto-detected over Wi-Fi." -ForegroundColor Yellow
-    Write-Host "On the M14: Developer options -> Wireless debugging (ON). Note the 'IP address & Port' on that screen." -ForegroundColor Yellow
-    $addr = Read-Host "Enter IP:port (e.g. 192.168.0.168:40123)  |  Enter = retry  |  q = quit"
-    if ($addr -eq 'q') { exit 1 }
-    if ($addr) { & $env:ADB connect $addr | Out-Null }
-    Start-Sleep -Milliseconds 1000
-    if (Test-Online) { $connected = $true }
-}
+. "$PSScriptRoot\Connect-Phone.ps1"
 
 # --- (re)start the hidden phone feed with the chosen camera ---
 # Stop any running feed/bubble first so the camera choice always takes effect.

@@ -22,17 +22,8 @@ $dir = Split-Path $scrcpy
 $adb = Join-Path $dir "adb.exe"
 $env:ADB = $adb   # make scrcpy use the bundled adb (ignores any stale system ADB var)
 
-# --- make sure the phone is reachable over Wi-Fi ---
-& $adb start-server | Out-Null
-if ($ConnectAddr) { & $adb connect $ConnectAddr | Out-Null }
-Start-Sleep -Milliseconds 800
-$online = (& $adb devices) | Select-String "device$"
-if (-not $online) {
-    Write-Host "No phone connected to adb." -ForegroundColor Yellow
-    Write-Host "On the M14: Developer options -> Wireless debugging (ON), same Wi-Fi as this PC." -ForegroundColor Yellow
-    Write-Host "If it still won't appear, open Wireless debugging, read the IP:port, set `$ConnectAddr at the top of this script, and retry." -ForegroundColor Yellow
-    Read-Host "Press Enter to exit"; exit 1
-}
+# --- make sure the phone is reachable (saved address / mDNS / manual, with a pair option) ---
+. "$PSScriptRoot\Connect-Phone.ps1"
 
 # --- launch the PhoneCam window ---
 $args = @(

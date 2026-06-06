@@ -14,19 +14,7 @@ $env:ADB = Join-Path $dir "adb.exe"
 $Rotate = & "$PSScriptRoot\Get-Rotation.ps1"   # asks at startup, remembers your choice
 
 # --- ensure phone reachable over Wi-Fi (mDNS auto, else prompt) ---
-& $env:ADB start-server | Out-Null
-if ($ConnectAddr) { & $env:ADB connect $ConnectAddr | Out-Null }
-function Test-Online { (& $env:ADB devices) | Select-String "device$" }
-$connected = $false
-for ($i = 0; $i -lt 5; $i++) { if (Test-Online) { $connected = $true; break }; Start-Sleep -Milliseconds 700 }
-while (-not $connected) {
-    Write-Host "Phone not auto-detected. Turn on Wireless debugging (same Wi-Fi)." -ForegroundColor Yellow
-    $addr = Read-Host "Enter IP:port  |  Enter = retry  |  q = quit"
-    if ($addr -eq 'q') { exit 1 }
-    if ($addr) { & $env:ADB connect $addr | Out-Null }
-    Start-Sleep -Milliseconds 1000
-    if (Test-Online) { $connected = $true }
-}
+. "$PSScriptRoot\Connect-Phone.ps1"
 
 # --- choose how to SEE the phone: full rectangle (default) or circular bubble ---
 Write-Host ""
