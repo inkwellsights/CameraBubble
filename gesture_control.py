@@ -41,8 +41,11 @@ PAUSE_GESTURE = "Thumb_Down"  # toggles ALL scanning on/off (freeze, so you can 
 # moving your whole hand doesn't scroll. Scrolls whatever is under the mouse, so hover there first.
 SCROLL_ENABLE   = True
 TOGGLE_FRAMES   = 3      # hold the 3-finger pose this many frames to flip scroll mode (debounce)
-SCROLL_DEADZONE = 0.12   # finger tilt within this of its neutral rest = no scroll (dead centre)
+SCROLL_DEADZONE = 0.05   # normalized signal must exceed this to scroll (lower = more sensitive to small tilts)
 SCROLL_SPEED    = 6      # sensitivity: scroll ticks per frame at full finger tilt (higher = faster)
+SCROLL_UP_BOOST = 3.0    # extra gain for UP direction: from a natural pointing-up rest the physical
+                         # upward range is tiny (finger can't bend past vertical), so we amplify it.
+                         # If up overshoots, dial this DOWN. If still slow, dial UP.
 SCROLL_INVERT   = False  # True flips up/down
 SCROLL_EXIT_NOHAND = 2.0 # auto-exit scroll mode after this many seconds with no hand in view
 COOLDOWN      = 1.2      # seconds before the same tap action can fire again
@@ -359,14 +362,18 @@ def main():
                                 pitch = (lm[5].y - lm[8].y) / palm      # + when fingertip is ABOVE the knuckle
                                 if neutral_pitch is None:
                                     neutral_pitch = pitch               # wherever you hold it now = rest
+                                    log(f"scroll neutral = {pitch:+.2f}  (a high value means finger pointed nearly straight up; tilt back a little if up scroll feels stuck)")
                                 signal = pitch - neutral_pitch
                                 if SCROLL_INVERT: signal = -signal
-                                # Asymmetric normalization: pitch tops out near +1 when finger is straight up,
-                                # so neutral captured at a pointing-up rest leaves almost no room to tilt UP.
-                                # Divide each direction by its own remaining range so both feel equally sensitive.
+                                # Asymmetric normalization + UP boost: from a pointing-up rest the physical
+                                # UP range is tiny while DOWN range is huge. Divide by remaining range AND
+                                # boost the up signal so subtle upward tilts produce real scroll speed.
                                 up_range = max(0.15, 1.05 - neutral_pitch)
                                 dn_range = max(0.15, neutral_pitch + 1.05)
-                                norm = signal / (up_range if signal > 0 else dn_range)
+                                if signal > 0:
+                                    norm = (signal / up_range) * SCROLL_UP_BOOST
+                                else:
+                                    norm = signal / dn_range
                                 mag = abs(norm)
                                 if mag > SCROLL_DEADZONE:
                                     ticks_f = (mag - SCROLL_DEADZONE) * SCROLL_SPEED * (1 if norm > 0 else -1)
