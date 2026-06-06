@@ -361,16 +361,22 @@ def main():
                                     neutral_pitch = pitch               # wherever you hold it now = rest
                                 signal = pitch - neutral_pitch
                                 if SCROLL_INVERT: signal = -signal
-                                mag = abs(signal)
+                                # Asymmetric normalization: pitch tops out near +1 when finger is straight up,
+                                # so neutral captured at a pointing-up rest leaves almost no room to tilt UP.
+                                # Divide each direction by its own remaining range so both feel equally sensitive.
+                                up_range = max(0.15, 1.05 - neutral_pitch)
+                                dn_range = max(0.15, neutral_pitch + 1.05)
+                                norm = signal / (up_range if signal > 0 else dn_range)
+                                mag = abs(norm)
                                 if mag > SCROLL_DEADZONE:
-                                    ticks_f = (mag - SCROLL_DEADZONE) * SCROLL_SPEED * (1 if signal > 0 else -1)
+                                    ticks_f = (mag - SCROLL_DEADZONE) * SCROLL_SPEED * (1 if norm > 0 else -1)
                                     scroll_accum += ticks_f
                                     ticks = int(scroll_accum)
                                     if ticks != 0:
                                         if not DRY: pyautogui.scroll(ticks)
                                         scroll_accum -= ticks
                                 if DEBUG and now - last_sdbg > 0.3:
-                                    log(f"[scroll] pitch={pitch:+.2f} neutral={neutral_pitch:+.2f} signal={signal:+.2f}")
+                                    log(f"[scroll] pitch={pitch:+.2f} neutral={neutral_pitch:+.2f} sig={signal:+.2f} norm={norm:+.2f}")
                                     last_sdbg = now
                         elif SCROLL_ENABLE:
                             three_count = 0; three_armed = False        # no hand / frozen: reset the toggle debounce
