@@ -42,7 +42,7 @@ PAUSE_GESTURE = "Thumb_Down"  # toggles ALL scanning on/off (freeze, so you can 
 SCROLL_ENABLE   = True
 TOGGLE_FRAMES   = 3      # hold the 3-finger pose this many frames to flip scroll mode (debounce)
 SCROLL_DEADZONE = 0.05   # normalized signal must exceed this to scroll (lower = more sensitive to small tilts)
-SCROLL_SPEED    = 6      # sensitivity: scroll ticks per frame at full finger tilt (higher = faster)
+SCROLL_SPEED    = 10     # sensitivity: scroll ticks per frame at full finger tilt (higher = faster)
 SCROLL_UP_BOOST = 3.0    # extra gain for UP direction: from a natural pointing-up rest the physical
                          # upward range is tiny (finger can't bend past vertical), so we amplify it.
                          # If up overshoots, dial this DOWN. If still slow, dial UP.
