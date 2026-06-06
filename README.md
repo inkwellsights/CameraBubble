@@ -91,6 +91,12 @@ PhoneSuite.bat
 | 👍 Thumbs up | Stop recording; **when stopped**, send (Enter) |
 | ✌️ Victory | Snipping tool (Win+Shift+S) |
 | 👎 Thumbs down | Freeze / unfreeze all gesture scanning (move your hands freely) |
+| 🤏 Pinch (tap) | Toggle scroll mode, then point your index finger up/down to scroll (pinch again to exit) |
+
+**Scroll** is a joystick, not a drag: pinch thumb and index once to turn scroll mode on (you don't
+hold the pinch), then just tilt your index finger up to scroll up, down to scroll down, hold it
+level to stop. Pinch again to exit. It scrolls whatever's under the mouse, so hover there first.
+Tune `SCROLL_SPEED`, `SCROLL_DEADZONE`, and `SCROLL_INVERT` at the top of `gesture_control.py`.
 
 Sending is always a deliberate thumbs-up on a paused prompt — nothing auto-sends mid-dictation.
 Everything is configurable at the top of `gesture_control.py` (`DICTATION_MODE`, `HOLD_WINDOW`,
