@@ -12,6 +12,7 @@ OpenCV, and [windows-capture](https://github.com/NiiightmareXD/windows-capture).
 | Tool | What it does |
 |---|---|
 | **`PhoneBubble.bat`** | Phone rear camera as a draggable, always-on-top circular bubble |
+| **`PhoneView.bat`** | Phone camera as a floating always-on-top window at full source quality (no bubble re-render = less CPU; rectangle, not circle) |
 | **`GestureControl.bat`** | Hand gestures → keystrokes (drives Claude Code `/voice`) |
 | **`PhoneSuite.bat`** | Bubble **+** gesture control together, one launch |
 | **`PhoneWebcam.bat`** | Phone as a virtual webcam (Meet, Zoom, WhatsApp, Telegram, Discord…) |
