@@ -1,7 +1,7 @@
-# Start-PhoneSuite.ps1 - phone camera bubble + gesture control, together.
+# Start-PhoneSuite.ps1 - phone camera view + gesture control, together.
 #   PhoneSuite.bat            (live - gestures press keys)
 #   PhoneSuite.bat --dry      (gesture engine logs only, no keypresses)
-# Starts: hidden scrcpy feed + bubble (no console) + gesture engine (this console).
+# Asks: full rectangle (default) or circular bubble; then runs the gesture engine.
 $ErrorActionPreference = "Stop"
 $Res = "1280x720"; $Fps = "30"; $CameraId = "0"; $ConnectAddr = ""
 
@@ -28,23 +28,35 @@ while (-not $connected) {
     if (Test-Online) { $connected = $true }
 }
 
-# --- start hidden phone feed if not already running ---
-if (-not (Get-Process scrcpy -ErrorAction SilentlyContinue)) {
+# --- choose how to SEE the phone: full rectangle (default) or circular bubble ---
+Write-Host ""
+Write-Host "Display:  [1] Full rectangle, always-on-top (default)   [2] Circle bubble" -ForegroundColor Cyan
+$useBubble = ((Read-Host "Choose 1 or 2 (Enter = rectangle)").Trim() -eq "2")
+
+# stop any existing feed/bubble so the chosen mode starts clean
+Get-Process scrcpy -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'PhoneBubble' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 600
+
+if ($useBubble) {
+    # hidden feed + circular bubble
     Start-Process -FilePath $scrcpy -ArgumentList `
         "--video-source=camera","--camera-id=$CameraId","--camera-size=$Res","--camera-fps=$Fps",`
         "--no-audio","--window-borderless","--window-title=PhoneCam","--window-x=5000","--window-y=5000","--capture-orientation=$Rotate"
     Start-Sleep -Seconds 5
-}
-
-# --- start the bubble (no console) if not already up ---
-$pyw = (Get-Command pythonw -ErrorAction SilentlyContinue).Source
-if (-not $pyw) { $pyw = (Get-Command python).Source }
-if (-not (Get-Process pythonw,python -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'PhoneBubble' })) {
+    $pyw = (Get-Command pythonw -ErrorAction SilentlyContinue).Source
+    if (-not $pyw) { $pyw = (Get-Command python).Source }
     Start-Process -FilePath $pyw -ArgumentList "`"$PSScriptRoot\phone_bubble.py`""
+} else {
+    # full-quality rectangle, always-on-top, draggable/resizable (no bubble = less CPU)
+    Start-Process -FilePath $scrcpy -ArgumentList `
+        "--video-source=camera","--camera-id=$CameraId","--camera-size=1920x1080","--camera-fps=$Fps",`
+        "--no-audio","--always-on-top","--window-title=PhoneCam","--window-width=400","--capture-orientation=$Rotate"
+    Start-Sleep -Seconds 5
 }
 
 # --- run the gesture engine in THIS console (so you see detections). Pass through args. ---
-Write-Host "Bubble + gesture control running. Ctrl+C (or close window) to stop everything." -ForegroundColor Green
+Write-Host "Phone view + gesture control running. Ctrl+C (or close window) to stop everything." -ForegroundColor Green
 $py = (Get-Command python).Source
 & $py "$PSScriptRoot\gesture_control.py" @args
 
