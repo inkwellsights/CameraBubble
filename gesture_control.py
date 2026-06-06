@@ -33,15 +33,14 @@ PAUSE_GESTURE = "Thumb_Down"  # toggles ALL scanning on/off (freeze, so you can 
                               # Same gesture freezes AND resumes - the engine keeps watching for THIS
                               # one even while frozen. Options: Thumb_Down, ILoveYou, Pointing_Up.
 
-# --- pinch-to-toggle, then index-finger JOYSTICK scroll ---
-# Pinch thumb+index ONCE to enter scroll mode (it's a tap/toggle, you don't hold it).
-# Then just point your index finger UP to scroll up, DOWN to scroll down, hold it level
-# to stop - like a joystick. Pinch again to EXIT. Scrolls whatever is under the mouse, so
-# hover over your target first. Far less finicky than holding a pinch and dragging, and it
-# reads finger TILT (tip vs knuckle) so moving your whole hand around doesn't scroll.
-PINCH_SCROLL    = True
-PINCH_ON        = 0.35   # "pinched" when (thumb-index gap / palm length) drops below this
-PINCH_OFF       = 0.55   # must reopen past this before another pinch counts (hysteresis)
+# --- 3-finger TOGGLE, then index-finger JOYSTICK scroll ---
+# Show THREE fingers (index+middle+ring up, thumb+pinky tucked) to toggle scroll mode on/off.
+# It's a deliberate pose, so just moving your hand around won't trigger it. Once on, drop to a
+# single pointing finger and tilt it UP to scroll up, DOWN to scroll down, hold level to stop -
+# like a joystick. Show three fingers again to EXIT. It reads finger TILT (tip vs knuckle), so
+# moving your whole hand doesn't scroll. Scrolls whatever is under the mouse, so hover there first.
+SCROLL_ENABLE   = True
+TOGGLE_FRAMES   = 3      # hold the 3-finger pose this many frames to flip scroll mode (debounce)
 SCROLL_DEADZONE = 0.12   # finger tilt within this of its neutral rest = no scroll (dead centre)
 SCROLL_SPEED    = 6      # sensitivity: scroll ticks per frame at full finger tilt (higher = faster)
 SCROLL_INVERT   = False  # True flips up/down
@@ -235,8 +234,9 @@ def main():
         for g, s in BINDINGS.items():
             print(f"    {g:<12} -> {s['desc']}")
     print(f"    {PAUSE_GESTURE:<12} -> FREEZE / UNFREEZE all scanning")
-    if PINCH_SCROLL:
-        print("    Pinch (tap)  -> toggle SCROLL mode; then point index UP/DOWN to scroll, pinch again to exit")
+    if SCROLL_ENABLE:
+        print("    3 fingers    -> toggle SCROLL mode (index+middle+ring UP, thumb+pinky DOWN)")
+        print("                    then drop to 1 finger, tilt UP/DOWN to scroll; 3 fingers again to exit")
     print("  Ctrl+C to quit.")
     print("=" * 56)
 
@@ -261,8 +261,9 @@ def main():
     last_infer = 0.0
     infer_period = 1.0 / INFER_FPS
     paused = False              # when True, all gesture actions are frozen (toggle with PAUSE_GESTURE)
-    scroll_mode = False         # index-finger scroll joystick engaged (a pinch toggles it on/off)
-    pinch_latched = False       # pinch currently closed (for rising-edge toggle detection)
+    scroll_mode = False         # index-finger scroll joystick engaged (a 3-finger pose toggles it)
+    three_count = 0             # consecutive frames the 3-finger pose has been held (debounce)
+    three_armed = False         # already toggled this hold; must drop the pose before it can fire again
     neutral_pitch = None        # finger pitch captured as the "rest" point when scroll mode starts
     scroll_accum = 0.0          # fractional scroll carry-over
     last_hand = time.time()     # last time a hand was seen (for scroll-mode auto-exit)
@@ -323,28 +324,38 @@ def main():
                             log(f"[dbg] hands={len(res.gestures or [])} raw=[{', '.join(raws)}] accepted={g}")
                             last_dbg = now
 
-                        # --- pinch toggles scroll mode; then the index finger is a scroll joystick ---
-                        if PINCH_SCROLL and not paused and res.hand_landmarks:
+                        # --- 3-finger pose toggles scroll mode; then index finger is a scroll joystick ---
+                        if SCROLL_ENABLE and not paused and res.hand_landmarks:
                             lm = res.hand_landmarks[0]
                             last_hand = now
                             d = lambda a, b: ((lm[a].x - lm[b].x) ** 2 + (lm[a].y - lm[b].y) ** 2) ** 0.5
                             palm = d(0, 9) + 1e-6                       # wrist -> middle knuckle (scale ref)
-                            gap = d(4, 8) / palm                        # thumb tip <-> index tip
-                            index_out = d(8, 5) / palm > 0.35           # index extended (vs curled in a fist)
-                            # rising edge of a pinch = toggle scroll mode on/off (a tap, not a hold)
-                            if not pinch_latched and gap < PINCH_ON and index_out:
-                                pinch_latched = True
-                                scroll_mode = not scroll_mode
-                                if scroll_mode:
-                                    neutral_pitch = None; scroll_accum = 0.0
-                                    last_palm = 0.0                     # close any open dictation window
-                                    log("SCROLL MODE ON - point index UP=up / DOWN=down, hold level=stop; pinch again to exit")
-                                else:
-                                    log("scroll mode off")
-                            elif pinch_latched and gap > PINCH_OFF:
-                                pinch_latched = False
-                            # joystick: index-finger pitch (tip vs its knuckle) sets scroll speed/direction
-                            if scroll_mode and not pinch_latched and index_out:
+                            ext = lambda tip, mcp: d(tip, mcp) / palm > 0.30   # finger extended (tip far from its knuckle)
+                            index_up  = ext(8, 5)
+                            middle_up = ext(12, 9)
+                            ring_up   = ext(16, 13)
+                            pinky_up  = ext(20, 17)
+                            thumb_out = d(4, 5) / palm > 0.40           # thumb sticking out (vs tucked across palm)
+                            three_finger = index_up and middle_up and ring_up and not pinky_up and not thumb_out
+
+                            # debounced rising edge: hold the 3-finger pose TOGGLE_FRAMES in a row to flip
+                            if three_finger:
+                                three_count += 1
+                                if three_count >= TOGGLE_FRAMES and not three_armed:
+                                    three_armed = True                  # don't re-toggle until pose drops
+                                    scroll_mode = not scroll_mode
+                                    if scroll_mode:
+                                        neutral_pitch = None; scroll_accum = 0.0
+                                        last_palm = 0.0                 # close any open dictation window
+                                        log("SCROLL MODE ON - drop to 1 finger, tilt UP/DOWN to scroll; 3 fingers again to exit")
+                                    else:
+                                        log("scroll mode off")
+                            else:
+                                three_count = 0
+                                three_armed = False
+
+                            # joystick: only scroll while pointing (index extended AND not still showing 3 fingers)
+                            if scroll_mode and not three_finger and index_up:
                                 pitch = (lm[5].y - lm[8].y) / palm      # + when fingertip is ABOVE the knuckle
                                 if neutral_pitch is None:
                                     neutral_pitch = pitch               # wherever you hold it now = rest
@@ -361,8 +372,8 @@ def main():
                                 if DEBUG and now - last_sdbg > 0.3:
                                     log(f"[scroll] pitch={pitch:+.2f} neutral={neutral_pitch:+.2f} signal={signal:+.2f}")
                                     last_sdbg = now
-                        elif PINCH_SCROLL:
-                            pinch_latched = False                       # no hand / frozen: reset the pinch edge
+                        elif SCROLL_ENABLE:
+                            three_count = 0; three_armed = False        # no hand / frozen: reset the toggle debounce
 
                         if g == prev:
                             stable += 1
@@ -374,7 +385,7 @@ def main():
                             last_palm = now                             # (re)open the window
 
                         # --- gesture transitions (fire once per gesture streak; not while pinch-scrolling) ---
-                        if stable >= STABLE_FRAMES and not fired and g != "None" and not scroll_mode and not pinch_latched:
+                        if stable >= STABLE_FRAMES and not fired and g != "None" and not scroll_mode:
                             fired = True
                             if g == PAUSE_GESTURE:                      # freeze/unfreeze everything
                                 paused = not paused
@@ -409,8 +420,8 @@ def main():
                                 dispatch(g)
 
             # auto-exit scroll mode if the hand leaves view (so it can't get stuck on)
-            if PINCH_SCROLL and scroll_mode and now - last_hand > SCROLL_EXIT_NOHAND:
-                scroll_mode = False; pinch_latched = False
+            if SCROLL_ENABLE and scroll_mode and now - last_hand > SCROLL_EXIT_NOHAND:
+                scroll_mode = False; three_count = 0; three_armed = False
                 log("scroll mode auto-exit (no hand)")
 
             # safety auto-release of latched keys
