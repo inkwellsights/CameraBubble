@@ -190,8 +190,10 @@ _badge_proc = None
 
 def write_mode(mode, ts):
     try:
-        with open(MODE_FILE, "w") as f:
+        tmp = MODE_FILE + ".tmp"
+        with open(tmp, "w") as f:
             f.write(f"{mode}\n{ts:.0f}")
+        os.replace(tmp, MODE_FILE)   # atomic rename - the badge never sees a half-written file
     except Exception:
         pass
 
@@ -413,8 +415,10 @@ def main():
                                 fist_count = 0
                             else:
                                 enter_count = 0
-                                # EXIT: a fist held a few frames
-                                if g == "Closed_Fist":
+                                # EXIT: a real fist (index actually CURLED) held a few frames.
+                                # Gating on `not index_up` stops a pointing finger that the model briefly
+                                # misreads as a fist (common when you tilt DOWN) from killing the scroll.
+                                if g == "Closed_Fist" and not index_up:
                                     fist_count += 1
                                     if fist_count >= EXIT_FRAMES:
                                         scroll_mode = False; fist_count = 0

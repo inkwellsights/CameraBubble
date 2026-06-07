@@ -9,7 +9,9 @@ phone_addr.txt
 
 # Mode-badge runtime files (local)
 _mode_status.txt
+_mode_status.txt.tmp
 _badge_pos.txt
+_badge_error.log
 
 # Python
 __pycache__/
