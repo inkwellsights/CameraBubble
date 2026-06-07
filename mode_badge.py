@@ -57,6 +57,9 @@ _u.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
 _u.SetWindowPos.restype = wintypes.BOOL
 _u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                             ctypes.c_int, ctypes.c_int, wintypes.UINT]
+_u.GetAncestor.restype = wintypes.HWND
+_u.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+GA_ROOT        = 2
 HWND_TOPMOST   = wintypes.HWND(-1)
 HWND_TOP       = wintypes.HWND(0)
 SWP_NOSIZE     = 0x0001
@@ -95,13 +98,15 @@ dot.pack(side="left", padx=(10, 5), pady=5)
 text = tk.Label(wrap, text=DEFAULT[2], font=("Segoe UI Semibold", 12, "bold"), bg=DEFAULT[0], fg=DEFAULT[1])
 text.pack(side="left", padx=(0, 12), pady=5)
 root.update_idletasks()
-_badge_hwnd = root.winfo_id()
+# IMPORTANT: tkinter's winfo_id() is an INNER child window. The titled top-level that actually
+# participates in the z-order is its root ancestor - using the child handle is why every z-order
+# request was a no-op and the cam kept covering the badge. Use the real top-level handle.
+_badge_hwnd = _u.GetAncestor(root.winfo_id(), GA_ROOT) or root.winfo_id()
 
 # off_x/off_y = where the badge sits relative to the cam's top-left.
-# default: just ABOVE the cam's top edge (no overlap = always visible; sidesteps the z-order fight
-# with the video window's always-on-top). It still moves as one piece with the cam.
-_bh = root.winfo_height() or 34
-off_x, off_y = 0, -(_bh + 2)
+# default: a small inset INSIDE the cam's top-left corner. We now force the badge above the cam in
+# the z-order (with the correct handle), so overlapping is fine and stays visible.
+off_x, off_y = 8, 8
 try:
     off_x, off_y = (int(v) for v in open(POS_FILE).read().split(","))
 except Exception:
