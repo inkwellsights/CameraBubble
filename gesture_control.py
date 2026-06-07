@@ -72,11 +72,20 @@ CMD_ENABLE       = True
 CMD_ENTER_FRAMES = 3      # hold Pointing_Up this many frames before command mode engages (debounce)
 CMD_EXIT_FRAMES  = 8      # hold a fist this many frames to leave command mode (same feel as scroll exit)
 CMD_EXIT_NOHAND  = 3.0    # auto-exit command mode after this many seconds with no hand in view
-CMD_BINDINGS = {          # gesture -> hotkey, fired only while in command mode
-    "Victory":   {"mode": "hotkey", "keys": ["ctrl", "c"],  "desc": "Copy"},
-    "Open_Palm": {"mode": "hotkey", "keys": ["ctrl", "v"],  "desc": "Paste"},
-    "Thumb_Up":  {"mode": "hotkey", "keys": ["alt", "tab"], "desc": "Switch app"},
+CMD_BINDINGS = {          # one-shot gesture -> hotkey, fired only while in command mode
+    "Victory":   {"mode": "hotkey", "keys": ["ctrl", "c"], "desc": "Copy"},
+    "Open_Palm": {"mode": "hotkey", "keys": ["ctrl", "v"], "desc": "Paste"},
 }
+# Thumb_Up opens a HELD Alt+Tab switcher instead of a one-shot tap: Alt is pressed and stays down
+# (latched in the safety tracker), so the Windows switcher stays on screen. Then move your WHOLE HAND
+# right to step forward through the open windows, left to step back; make a FIST to land on the
+# highlighted one (releasing Alt). This is how you pick a SPECIFIC window, not just the previous one.
+CMD_TAB_MOD      = "alt"   # modifier held down to keep the switcher open
+CMD_TAB_CENTER   = 0.5     # frame centre (normalized hand x); inside the deadzone = hold, don't step
+CMD_TAB_DEADZONE = 0.12    # +/- band around centre that does nothing (calm "hold" zone)
+CMD_TAB_INTERVAL = 0.35    # seconds between steps while the hand is held out past the deadzone
+CMD_TAB_INVERT   = True    # the rear cam faces you un-mirrored, so your physical right reads as image-
+                           # left; True makes "hand right = step right". Flip to False if it feels backwards.
 COOLDOWN      = 1.2      # seconds before the same tap action can fire again
 MAX_HOLD      = 120      # safety: hard cap - auto-release any latched key after N seconds
 NOHAND_RELEASE = 45      # safety: release latched keys after N seconds with NO gesture seen
@@ -313,8 +322,9 @@ def main():
         print(f"    {_enter}  -> ENTER scroll; then point 1 finger, tilt UP/DOWN to scroll")
         print("    Fist (while scrolling)    -> EXIT scroll")
     if CMD_ENABLE:
-        print("    Pointing_Up  -> ENTER command mode (Victory=Copy, Palm=Paste, Thumb_Up=Switch app)")
-        print("    Fist (in command mode)    -> EXIT command mode")
+        print("    Pointing_Up  -> ENTER command mode (Victory=Copy, Palm=Paste)")
+        print("    Thumb_Up (in command)     -> HOLD Alt+Tab; move whole hand L/R to pick a window")
+        print("    Fist (in command mode)    -> pick highlighted window / EXIT command mode")
     print("  Ctrl+C to quit.")
     print("=" * 56)
 
@@ -345,6 +355,8 @@ def main():
     cmd_mode = False            # command mode engaged (Pointing_Up enters, fist exits)
     point_count = 0             # consecutive frames Pointing_Up has been held (command enter debounce)
     cmd_fist_count = 0          # consecutive frames a fist has been held in command mode (to exit)
+    switcher_open = False       # the held Alt+Tab switcher is up (Thumb_Up opens it, fist commits)
+    last_tab_step = 0.0         # last time the switcher stepped a window (cadence throttle)
     scroll_accum = 0.0          # fractional scroll carry-over
     last_hand = time.time()     # last time a hand was seen (for scroll/command auto-exit)
     last_sdbg = 0.0             # scroll debug throttle
@@ -493,16 +505,32 @@ def main():
                                         cmd_mode = True
                                         last_palm = 0.0                 # close any open dictation window
                                         prev = "Pointing_Up"; fired = True   # the enter-point must NOT also fire an action
-                                        log("COMMAND MODE ON - Victory=Copy, Open_Palm=Paste, Thumb_Up=Switch app; hold FIST to exit")
+                                        log("COMMAND MODE ON - Victory=Copy, Open_Palm=Paste, Thumb_Up=Alt+Tab switcher; hold FIST to exit")
                                 else:
                                     point_count = 0
                                 cmd_fist_count = 0
                             else:
                                 point_count = 0
-                                # EXIT: hold a fist for CMD_EXIT_FRAMES in a row (a brief misread can't kick you out)
+                                # NAVIGATE the held Alt+Tab switcher by WHOLE-HAND horizontal position
+                                # (fixed centre, like the scroll joystick). Skipped while a fist is forming
+                                # so the commit-fist doesn't also step the highlight.
+                                if switcher_open and res.hand_landmarks and g != "Closed_Fist":
+                                    hand_x = res.hand_landmarks[0][9].x      # middle knuckle = hand centre (0..1)
+                                    off = (CMD_TAB_CENTER - hand_x) if CMD_TAB_INVERT else (hand_x - CMD_TAB_CENTER)
+                                    if abs(off) > CMD_TAB_DEADZONE and now - last_tab_step >= CMD_TAB_INTERVAL:
+                                        if not DRY:
+                                            if off > 0: pyautogui.press("tab")            # hand right -> forward
+                                            else:       pyautogui.hotkey("shift", "tab")  # hand left  -> backward
+                                        last_tab_step = now
+                                # EXIT / COMMIT: hold a fist for CMD_EXIT_FRAMES in a row (a brief misread can't kick you out)
                                 if g == "Closed_Fist":
                                     cmd_fist_count += 1
                                     if cmd_fist_count >= CMD_EXIT_FRAMES:
+                                        if switcher_open:                    # land on the highlighted window
+                                            if not DRY: pyautogui.keyUp(CMD_TAB_MOD)
+                                            held.pop(CMD_TAB_MOD, None)
+                                            switcher_open = False
+                                            log("ALT+TAB picked (fist)")
                                         cmd_mode = False; cmd_fist_count = 0
                                         prev = "Closed_Fist"; fired = True   # the exit-fist must NOT also fire an action
                                         log("command mode off (fist)")
@@ -524,7 +552,18 @@ def main():
                         if stable >= STABLE_FRAMES and not fired and g != "None" and not scroll_mode and not enter_pose:
                             fired = True
                             if cmd_mode:                                # command mode: gestures fire OS shortcuts
-                                dispatch(g, CMD_BINDINGS)               # Victory->Ctrl+C, Open_Palm->Ctrl+V, Thumb_Up->Alt+Tab
+                                if switcher_open:
+                                    pass                                # switcher up: navigation + fist-commit handled above
+                                elif g == "Thumb_Up":                   # open a HELD Alt+Tab switcher (move hand to pick)
+                                    if not DRY:
+                                        pyautogui.keyDown(CMD_TAB_MOD)
+                                        time.sleep(0.03)                # let Alt register before the first Tab
+                                        pyautogui.press("tab")
+                                    held[CMD_TAB_MOD] = now             # latch Alt in the safety auto-release tracker
+                                    switcher_open = True; last_tab_step = now
+                                    log("ALT+TAB switcher OPEN - move WHOLE HAND right/left to step, FIST to pick")
+                                else:
+                                    dispatch(g, CMD_BINDINGS)           # Victory->Ctrl+C, Open_Palm->Ctrl+V
                             elif g == PAUSE_GESTURE:                    # freeze/unfreeze everything
                                 paused = not paused
                                 if paused:
@@ -565,6 +604,10 @@ def main():
 
             # auto-exit command mode too if the hand leaves view (so a later palm can't paste by surprise)
             if CMD_ENABLE and cmd_mode and now - last_hand > CMD_EXIT_NOHAND:
+                if switcher_open:                                       # release Alt (lands on the highlighted window)
+                    if not DRY: pyautogui.keyUp(CMD_TAB_MOD)
+                    held.pop(CMD_TAB_MOD, None)
+                    switcher_open = False
                 cmd_mode = False; point_count = 0; cmd_fist_count = 0
                 log("command mode auto-exit (no hand)")
 
@@ -582,12 +625,12 @@ def main():
             if now - last_hb >= 3:
                 fps = (grab.count - last_count) / (now - last_hb)
                 throttle = "active" if active_now else "idle"
-                state = " [FROZEN]" if paused else (" [SCROLL]" if scroll_mode else (" [CMD]" if cmd_mode else ""))
+                state = " [FROZEN]" if paused else (" [SCROLL]" if scroll_mode else ((" [TAB]" if switcher_open else " [CMD]") if cmd_mode else ""))
                 log(f"[hb] alive  frames_in={grab.count} ({fps:.0f}/s)  infer={loops} ({throttle})  current={prev}{state}")
                 last_hb, last_count = now, grab.count
 
             # --- update the mode badge (write on change, plus a ~1s liveness heartbeat) ---
-            mode_now = "FROZEN" if paused else ("SCROLL" if scroll_mode else ("CMD" if cmd_mode else ("TALK" if streaming else "READY")))
+            mode_now = "FROZEN" if paused else ("SCROLL" if scroll_mode else (("TAB" if switcher_open else "CMD") if cmd_mode else ("TALK" if streaming else "READY")))
             if mode_now != cur_mode or now - last_mode_write > 1.0:
                 cur_mode = mode_now
                 write_mode(mode_now, now)
