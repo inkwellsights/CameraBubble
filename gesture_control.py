@@ -61,7 +61,22 @@ SCROLL_UP_GAIN  = 2.0    # extra multiplier for UP only - tilting up has less ph
                          # so scroll-up feels slower. Bump this to speed UP up without touching down.
 SCROLL_INVERT   = False  # True flips up/down
 SCROLL_EXIT_NOHAND = 2.0 # auto-exit scroll mode after this many seconds with no hand in view
-SHOW_BADGE      = True   # show the always-on-top mode badge (FROZEN / SCROLL / TALK / READY)
+SHOW_BADGE      = True   # show the always-on-top mode badge (FROZEN / SCROLL / CMD / TALK / READY)
+
+# --- COMMAND mode: point ONE finger up to open a hotkey palette, then gestures fire OS shortcuts ---
+# A second sub-mode, built exactly like scroll mode. Point one finger straight up (Pointing_Up) to
+# ENTER; while in it, dictation and the normal gesture actions are suppressed and these trained
+# gestures fire system shortcuts instead. Make a FIST to leave. Pointing_Up is the only built-in
+# trained gesture not already used elsewhere, so it detects as reliably as palm/fist/thumbs.
+CMD_ENABLE       = True
+CMD_ENTER_FRAMES = 3      # hold Pointing_Up this many frames before command mode engages (debounce)
+CMD_EXIT_FRAMES  = 8      # hold a fist this many frames to leave command mode (same feel as scroll exit)
+CMD_EXIT_NOHAND  = 3.0    # auto-exit command mode after this many seconds with no hand in view
+CMD_BINDINGS = {          # gesture -> hotkey, fired only while in command mode
+    "Victory":   {"mode": "hotkey", "keys": ["ctrl", "c"],  "desc": "Copy"},
+    "Open_Palm": {"mode": "hotkey", "keys": ["ctrl", "v"],  "desc": "Paste"},
+    "Thumb_Up":  {"mode": "hotkey", "keys": ["alt", "tab"], "desc": "Switch app"},
+}
 COOLDOWN      = 1.2      # seconds before the same tap action can fire again
 MAX_HOLD      = 120      # safety: hard cap - auto-release any latched key after N seconds
 NOHAND_RELEASE = 45      # safety: release latched keys after N seconds with NO gesture seen
@@ -134,8 +149,8 @@ def log(msg):
     print(time.strftime("%H:%M:%S "), msg, flush=True)
 
 
-def dispatch(gesture):
-    spec = BINDINGS.get(gesture)
+def dispatch(gesture, bindings=None):
+    spec = (bindings if bindings is not None else BINDINGS).get(gesture)
     if not spec:
         return
     mode = spec["mode"]
@@ -297,6 +312,9 @@ def main():
         _enter = {"shaka": "Shaka (thumb+pinky out)", "iloveyou": "Rock sign (thumb+index+pinky)", "three": "3 fingers up"}.get(SCROLL_ENTER, SCROLL_ENTER)
         print(f"    {_enter}  -> ENTER scroll; then point 1 finger, tilt UP/DOWN to scroll")
         print("    Fist (while scrolling)    -> EXIT scroll")
+    if CMD_ENABLE:
+        print("    Pointing_Up  -> ENTER command mode (Victory=Copy, Palm=Paste, Thumb_Up=Switch app)")
+        print("    Fist (in command mode)    -> EXIT command mode")
     print("  Ctrl+C to quit.")
     print("=" * 56)
 
@@ -324,8 +342,11 @@ def main():
     scroll_mode = False         # scroll joystick engaged (enter pose turns on, fist turns off)
     enter_count = 0             # consecutive frames the enter pose has been held (debounce)
     fist_count = 0              # consecutive frames a fist has been held in scroll mode (to exit)
+    cmd_mode = False            # command mode engaged (Pointing_Up enters, fist exits)
+    point_count = 0             # consecutive frames Pointing_Up has been held (command enter debounce)
+    cmd_fist_count = 0          # consecutive frames a fist has been held in command mode (to exit)
     scroll_accum = 0.0          # fractional scroll carry-over
-    last_hand = time.time()     # last time a hand was seen (for scroll-mode auto-exit)
+    last_hand = time.time()     # last time a hand was seen (for scroll/command auto-exit)
     last_sdbg = 0.0             # scroll debug throttle
     cur_mode = None             # last mode written to the badge status file
     last_mode_write = 0.0       # heartbeat throttle for the status file
@@ -354,7 +375,7 @@ def main():
             # adaptive throttle: full speed while you're interacting, idle FPS when no hand has been
             # around for a few seconds. This is the big CPU/heat saver - no sense running the detector
             # at 15fps while you're just working. It wakes the instant a hand reappears.
-            active_now = (now - last_hand < IDLE_AFTER) or streaming or scroll_mode
+            active_now = (now - last_hand < IDLE_AFTER) or streaming or scroll_mode or cmd_mode
             infer_period = 1.0 / (INFER_FPS if active_now else IDLE_FPS)
 
             # --- gesture recognition: throttled + downscaled (the CPU saver) ---
@@ -396,7 +417,7 @@ def main():
 
                         # --- ENTER scroll with a pose (shaka/iloveyou/three), EXIT with a fist; 1-finger joystick ---
                         enter_pose = False
-                        if SCROLL_ENABLE and not paused and res.hand_landmarks:
+                        if SCROLL_ENABLE and not paused and not cmd_mode and res.hand_landmarks:
                             lm = res.hand_landmarks[0]
                             last_hand = now
                             d = lambda a, b: ((lm[a].x - lm[b].x) ** 2 + (lm[a].y - lm[b].y) ** 2) ** 0.5
@@ -458,23 +479,58 @@ def main():
                         elif SCROLL_ENABLE:
                             enter_count = 0; fist_count = 0             # no hand / frozen: reset the debounce
 
+                        # --- COMMAND mode: Pointing_Up enters a hotkey palette; gestures fire shortcuts; fist exits ---
+                        # Built like scroll mode (its own enter/exit debounce). Mutually exclusive with scroll:
+                        # gated off while scroll is on, and it gates scroll off while it is on.
+                        if CMD_ENABLE and not paused and not scroll_mode:
+                            if res.hand_landmarks:
+                                last_hand = now
+                            if not cmd_mode:
+                                # ENTER: hold one finger straight up a few frames
+                                if g == "Pointing_Up":
+                                    point_count += 1
+                                    if point_count >= CMD_ENTER_FRAMES:
+                                        cmd_mode = True
+                                        last_palm = 0.0                 # close any open dictation window
+                                        prev = "Pointing_Up"; fired = True   # the enter-point must NOT also fire an action
+                                        log("COMMAND MODE ON - Victory=Copy, Open_Palm=Paste, Thumb_Up=Switch app; hold FIST to exit")
+                                else:
+                                    point_count = 0
+                                cmd_fist_count = 0
+                            else:
+                                point_count = 0
+                                # EXIT: hold a fist for CMD_EXIT_FRAMES in a row (a brief misread can't kick you out)
+                                if g == "Closed_Fist":
+                                    cmd_fist_count += 1
+                                    if cmd_fist_count >= CMD_EXIT_FRAMES:
+                                        cmd_mode = False; cmd_fist_count = 0
+                                        prev = "Closed_Fist"; fired = True   # the exit-fist must NOT also fire an action
+                                        log("command mode off (fist)")
+                                else:
+                                    cmd_fist_count = 0
+                        elif CMD_ENABLE:
+                            point_count = 0; cmd_fist_count = 0         # no command mode available now: reset
+
                         if g == prev:
                             stable += 1
                         else:
                             prev, stable, fired = g, 1, False
                         if g != "None":
                             last_active = now
-                        if DICTATION_MODE == "hold" and not paused and not scroll_mode and g == "Open_Palm":
+                        if DICTATION_MODE == "hold" and not paused and not scroll_mode and not cmd_mode and g == "Open_Palm":
                             last_palm = now                             # (re)open the window
 
                         # --- gesture transitions (fire once per gesture streak; not while scrolling) ---
                         if stable >= STABLE_FRAMES and not fired and g != "None" and not scroll_mode and not enter_pose:
                             fired = True
-                            if g == PAUSE_GESTURE:                      # freeze/unfreeze everything
+                            if cmd_mode:                                # command mode: gestures fire OS shortcuts
+                                dispatch(g, CMD_BINDINGS)               # Victory->Ctrl+C, Open_Palm->Ctrl+V, Thumb_Up->Alt+Tab
+                            elif g == PAUSE_GESTURE:                    # freeze/unfreeze everything
                                 paused = not paused
                                 if paused:
                                     last_palm = 0.0                     # close any open dictation window
                                     scroll_mode = False                 # and drop out of scroll mode
+                                    cmd_mode = False                    # and out of command mode
                                     log(f"*** SCANNING PAUSED *** (show {PAUSE_GESTURE} again to resume)")
                                 else:
                                     log("*** SCANNING RESUMED ***")
@@ -507,6 +563,11 @@ def main():
                 scroll_mode = False; enter_count = 0; fist_count = 0
                 log("scroll mode auto-exit (no hand)")
 
+            # auto-exit command mode too if the hand leaves view (so a later palm can't paste by surprise)
+            if CMD_ENABLE and cmd_mode and now - last_hand > CMD_EXIT_NOHAND:
+                cmd_mode = False; point_count = 0; cmd_fist_count = 0
+                log("command mode auto-exit (no hand)")
+
             # safety auto-release of latched keys
             if held and now - last_active > NOHAND_RELEASE:
                 log(f"safety: no gesture for {NOHAND_RELEASE}s -> releasing latched keys")
@@ -521,12 +582,12 @@ def main():
             if now - last_hb >= 3:
                 fps = (grab.count - last_count) / (now - last_hb)
                 throttle = "active" if active_now else "idle"
-                state = " [FROZEN]" if paused else (" [SCROLL]" if scroll_mode else "")
+                state = " [FROZEN]" if paused else (" [SCROLL]" if scroll_mode else (" [CMD]" if cmd_mode else ""))
                 log(f"[hb] alive  frames_in={grab.count} ({fps:.0f}/s)  infer={loops} ({throttle})  current={prev}{state}")
                 last_hb, last_count = now, grab.count
 
             # --- update the mode badge (write on change, plus a ~1s liveness heartbeat) ---
-            mode_now = "FROZEN" if paused else ("SCROLL" if scroll_mode else ("TALK" if streaming else "READY"))
+            mode_now = "FROZEN" if paused else ("SCROLL" if scroll_mode else ("CMD" if cmd_mode else ("TALK" if streaming else "READY")))
             if mode_now != cur_mode or now - last_mode_write > 1.0:
                 cur_mode = mode_now
                 write_mode(mode_now, now)

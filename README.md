@@ -95,6 +95,8 @@ PhoneSuite.bat
 | 👎 Thumbs down | Freeze / unfreeze all gesture scanning (move your hands freely) |
 | 🤟 Rock sign (enter) | Enter scroll mode (thumb + index + pinky). Then point one finger and tilt up/down to scroll. |
 | ✊ Fist (in scroll) | Exit scroll mode. |
+| ☝️ Point up | Enter **command mode** (one finger straight up). Then: Victory = copy, palm = paste, thumbs up = switch app. |
+| ✊ Fist (in command) | Exit command mode. |
 
 **Scroll** is a joystick, not a drag: show the rock sign (🤟, thumb + index + pinky) to enter scroll
 mode, then drop to one pointing finger and tilt it up to scroll up, down to scroll down, hold level to
@@ -104,9 +106,17 @@ reliably; the landmark-based alternatives (`"shaka"`, `"three"`) tend to be jitt
 line: `SCROLL_ENTER = "iloveyou"`. It scrolls whatever's under the mouse, so hover there first. Tune
 `SCROLL_SPEED`, `SCROLL_DEADZONE`, and `SCROLL_INVERT` at the top of `gesture_control.py`.
 
+**Command mode** is a second sub-mode for keyboard shortcuts. Point one finger straight up to enter,
+then fire system actions with single gestures: **Victory = copy** (Ctrl+C), **open palm = paste**
+(Ctrl+V), **thumbs up = switch app** (Alt+Tab). Make a fist to exit (or just drop your hand for a few
+seconds). While in command mode, dictation and the normal gesture actions are paused so nothing fires
+by accident. Pointing up is the only built-in trained gesture not already in use, so it detects as
+reliably as palm or fist. Add your own shortcuts in the `CMD_BINDINGS` table at the top of
+`gesture_control.py`.
+
 **Mode badge.** A small always-on-top pill shows the current mode so you never have to watch the
-console: **READY** (blue, palm to talk), **TALK** (green, recording), **SCROLL** (orange), **FROZEN**
-(gray, paused). Drag it onto your phone-cam view and it stays there. It launches with the gesture
+console: **READY** (blue, palm to talk), **TALK** (green, recording), **SCROLL** (orange), **CMD**
+(purple, command mode), **FROZEN** (gray, paused). Drag it onto your phone-cam view and it stays there. It launches with the gesture
 engine and closes with it. Turn it off with `SHOW_BADGE = False`.
 
 Sending is always a deliberate thumbs-up on a paused prompt — nothing auto-sends mid-dictation.

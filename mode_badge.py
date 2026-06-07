@@ -3,7 +3,7 @@ mode_badge.py - tiny always-on-top badge showing the gesture engine's current MO
 
 Launched automatically by gesture_control.py (when SHOW_BADGE is True). It reads
 _mode_status.txt (written atomically by the engine), shows a colored pill -
-FROZEN / SCROLL / TALK / READY - and, when ATTACH is on, follows the phone-cam window
+FROZEN / SCROLL / CMD / TALK / READY - and, when ATTACH is on, follows the phone-cam window
 and forces itself ABOVE it (the cam is also always-on-top, so the badge explicitly
 orders the cam just below itself every tick). Drag it to reposition; the spot (relative
 to the cam) is remembered. It closes itself when the engine stops.
@@ -30,6 +30,7 @@ CAM_TITLES = ["PhoneCam", "PhoneBubble"]   # scrcpy rectangle, or the circular b
 STYLE = {
     "FROZEN": ("#6b7280", "#ffffff", "FROZEN"),   # gray
     "SCROLL": ("#f97316", "#ffffff", "SCROLL"),   # orange
+    "CMD":    ("#a855f7", "#ffffff", "CMD"),      # purple
     "TALK":   ("#22c55e", "#08160c", "TALK"),     # green
     "READY":  ("#2563eb", "#ffffff", "READY"),    # blue
 }
