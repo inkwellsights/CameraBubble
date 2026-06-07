@@ -4,8 +4,9 @@ mode_badge.py - tiny always-on-top badge showing the gesture engine's current MO
 Launched automatically by gesture_control.py (when SHOW_BADGE is True). It reads
 _mode_status.txt (written atomically by the engine), shows a colored pill -
 FROZEN / SCROLL / TALK / READY - and, when ATTACH is on, follows the phone-cam window
-so the two move together. Drag it to reposition; the spot (relative to the cam) is
-remembered. It closes itself when the engine stops.
+so the two move together. By default it sits just ABOVE the cam (so the cam can't cover
+it) and re-asserts topmost every tick. Drag it to reposition; the spot (relative to the
+cam) is remembered. It closes itself when the engine stops.
 
 Robust by design: a bad/partial read is ignored (keeps the last state); it only closes
 when the engine's timestamp goes genuinely stale. Any error is logged to _badge_error.log.
@@ -43,7 +44,7 @@ def log_err(msg):
         pass
 
 
-# --- Win32 plumbing to find + follow the cam window (64-bit safe) ---
+# --- Win32 plumbing to find, follow, and stay above the cam window (64-bit safe) ---
 _u = ctypes.windll.user32
 _u.FindWindowW.restype = wintypes.HWND
 _u.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
@@ -53,6 +54,12 @@ _u.GetWindowLongW.restype = ctypes.c_long
 _u.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
 _u.SetWindowLongW.restype = ctypes.c_long
 _u.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+_u.SetWindowPos.restype = wintypes.BOOL
+_u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                            ctypes.c_int, ctypes.c_int, wintypes.UINT]
+HWND_TOPMOST   = wintypes.HWND(-1)
+SWP_NOSIZE     = 0x0001
+SWP_NOACTIVATE = 0x0010
 
 
 def cam_origin():
@@ -79,20 +86,33 @@ try:
 except Exception:
     pass
 
-# off_x/off_y = where the badge sits relative to the cam's top-left (inset by default)
-off_x, off_y = 12, 12
-try:
-    off_x, off_y = (int(v) for v in open(POS_FILE).read().split(","))
-except Exception:
-    pass
-root.geometry(f"+{off_x}+{off_y}")
-
 wrap = tk.Frame(root, bg=DEFAULT[0], bd=0, highlightthickness=2, highlightbackground="#0b1220")
 wrap.pack()
 dot = tk.Label(wrap, text="●", font=("Segoe UI", 13, "bold"), bg=DEFAULT[0], fg=DEFAULT[1])
 dot.pack(side="left", padx=(10, 5), pady=5)
 text = tk.Label(wrap, text=DEFAULT[2], font=("Segoe UI Semibold", 12, "bold"), bg=DEFAULT[0], fg=DEFAULT[1])
 text.pack(side="left", padx=(0, 12), pady=5)
+root.update_idletasks()
+_badge_hwnd = root.winfo_id()
+_bh = root.winfo_height() or 34
+
+# off_x/off_y = where the badge sits relative to the cam's top-left.
+# default: just ABOVE the cam's top edge, left-aligned, so the cam can't cover it.
+off_x, off_y = 0, -(_bh + 4)
+try:
+    off_x, off_y = (int(v) for v in open(POS_FILE).read().split(","))
+except Exception:
+    pass
+root.geometry(f"+{max(off_x, 0)}+{max(off_y, 0)}")   # placeholder until the first follow tick
+
+
+def place(x, y):
+    """Move the badge AND re-assert topmost (so the always-on-top cam can't cover it)."""
+    try:
+        _u.SetWindowPos(_badge_hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
+    except Exception:
+        root.geometry(f"+{x}+{y}")
+
 
 # --- drag to move; remember the offset relative to the cam window ---
 _d = {"x": 0, "y": 0, "drag": False}
@@ -127,9 +147,8 @@ def _no_activate():
         GWL_EXSTYLE = -20
         WS_EX_NOACTIVATE = 0x08000000
         WS_EX_TOOLWINDOW = 0x00000080
-        hwnd = root.winfo_id()
-        ex = _u.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        _u.SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+        ex = _u.GetWindowLongW(_badge_hwnd, GWL_EXSTYLE)
+        _u.SetWindowLongW(_badge_hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
     except Exception:
         pass
 
@@ -168,17 +187,14 @@ def tick():
     # close only when the engine has genuinely stopped updating (stale ts), past startup grace
     if now - last_good[0] > 5 and now - START > 5:
         root.destroy(); return
-    # follow the cam window (unless you're mid-drag)
+    # follow the cam window + stay above it (unless you're mid-drag)
     if ATTACH and not _d["drag"]:
         org = cam_origin()
         if org:
-            nx, ny = org[0] + off_x, org[1] + off_y
-            if (root.winfo_x(), root.winfo_y()) != (nx, ny):
-                root.geometry(f"+{nx}+{ny}")
+            place(org[0] + off_x, org[1] + off_y)
     root.after(80, tick)
 
 
-root.update_idletasks()
 _no_activate()
 tick()
 try:

@@ -46,12 +46,12 @@ SCROLL_ENTER    = "iloveyou"  # which pose ENTERS scroll mode (one-line swap):
                            #   "shaka"    = thumb + pinky out, middle three folded   (homemade landmark detection)
                            #   "three"    = index + middle + ring up, pinky down     (homemade landmark detection)
 ENTER_FRAMES    = 3      # hold the enter pose this many frames before scroll engages (debounce)
-EXIT_FRAMES     = 3      # hold a fist this many frames to leave scroll mode
-SCROLL_DEADZONE = 0.05   # normalized signal must exceed this to scroll (lower = more sensitive to small tilts)
+EXIT_FRAMES     = 8      # hold a fist this many frames to leave scroll mode. Longer = a brief mid-scroll
+                         # "fist" misread can't kick you out; you just hold the fist ~0.5s to exit.
+SCROLL_NEUTRAL  = 0.05   # finger pitch that means "level / stop" (0 = horizontal). FIXED reference, so
+                         # tilting UP always has room to scroll up (no more capture-at-the-top dead zone).
+SCROLL_DEADZONE = 0.18   # +/- band around neutral that does nothing (bigger = wider, calmer "stop" zone)
 SCROLL_SPEED    = 10     # sensitivity: scroll ticks per frame at full finger tilt (higher = faster)
-SCROLL_UP_BOOST = 3.0    # extra gain for UP direction: from a natural pointing-up rest the physical
-                         # upward range is tiny (finger can't bend past vertical), so we amplify it.
-                         # If up overshoots, dial this DOWN. If still slow, dial UP.
 SCROLL_INVERT   = False  # True flips up/down
 SCROLL_EXIT_NOHAND = 2.0 # auto-exit scroll mode after this many seconds with no hand in view
 SHOW_BADGE      = True   # show the always-on-top mode badge (FROZEN / SCROLL / TALK / READY)
@@ -317,7 +317,6 @@ def main():
     scroll_mode = False         # scroll joystick engaged (enter pose turns on, fist turns off)
     enter_count = 0             # consecutive frames the enter pose has been held (debounce)
     fist_count = 0              # consecutive frames a fist has been held in scroll mode (to exit)
-    neutral_pitch = None        # finger pitch captured as the "rest" point when scroll mode starts
     scroll_accum = 0.0          # fractional scroll carry-over
     last_hand = time.time()     # last time a hand was seen (for scroll-mode auto-exit)
     last_sdbg = 0.0             # scroll debug throttle
@@ -407,18 +406,18 @@ def main():
                                     enter_count += 1
                                     if enter_count >= ENTER_FRAMES:
                                         scroll_mode = True
-                                        neutral_pitch = None; scroll_accum = 0.0
+                                        scroll_accum = 0.0
                                         last_palm = 0.0                 # close any open dictation window
-                                        log("SCROLL MODE ON - point 1 finger, tilt UP/DOWN to scroll; FIST to exit")
+                                        log("SCROLL MODE ON - point 1 finger LEVEL=stop, tilt UP/DOWN to scroll; hold FIST to exit")
                                 else:
                                     enter_count = 0
                                 fist_count = 0
                             else:
                                 enter_count = 0
-                                # EXIT: a real fist (index actually CURLED) held a few frames.
-                                # Gating on `not index_up` stops a pointing finger that the model briefly
-                                # misreads as a fist (common when you tilt DOWN) from killing the scroll.
-                                if g == "Closed_Fist" and not index_up:
+                                # EXIT: hold a fist for EXIT_FRAMES in a row. The HOLD (not a landmark
+                                # gate) is what rejects a brief mid-tilt "fist" misread - a transient flash
+                                # never reaches the count, but a deliberate held fist does.
+                                if g == "Closed_Fist":
                                     fist_count += 1
                                     if fist_count >= EXIT_FRAMES:
                                         scroll_mode = False; fist_count = 0
@@ -428,29 +427,19 @@ def main():
                                     fist_count = 0
                                 # JOYSTICK: only while pointing (index up, and not holding the enter pose)
                                 if scroll_mode and index_up and not enter_pose:
-                                    pitch = (lm[5].y - lm[8].y) / palm  # + when fingertip is ABOVE the knuckle
-                                    if neutral_pitch is None:
-                                        neutral_pitch = pitch           # wherever you hold it now = rest
-                                        log(f"scroll neutral = {pitch:+.2f}")
-                                    signal = pitch - neutral_pitch
+                                    pitch = (lm[5].y - lm[8].y) / palm  # + finger UP, - finger DOWN, ~0 level
+                                    signal = pitch - SCROLL_NEUTRAL     # fixed "level = stop" reference (symmetric range)
                                     if SCROLL_INVERT: signal = -signal
-                                    # Asymmetric normalization + UP boost (a pointing-up rest leaves little UP range)
-                                    up_range = max(0.15, 1.05 - neutral_pitch)
-                                    dn_range = max(0.15, neutral_pitch + 1.05)
-                                    if signal > 0:
-                                        norm = (signal / up_range) * SCROLL_UP_BOOST
-                                    else:
-                                        norm = signal / dn_range
-                                    mag = abs(norm)
+                                    mag = abs(signal)
                                     if mag > SCROLL_DEADZONE:
-                                        ticks_f = (mag - SCROLL_DEADZONE) * SCROLL_SPEED * (1 if norm > 0 else -1)
+                                        ticks_f = (mag - SCROLL_DEADZONE) * SCROLL_SPEED * (1 if signal > 0 else -1)
                                         scroll_accum += ticks_f
                                         ticks = int(scroll_accum)
                                         if ticks != 0:
                                             if not DRY: pyautogui.scroll(ticks)
                                             scroll_accum -= ticks
                                     if DEBUG and now - last_sdbg > 0.3:
-                                        log(f"[scroll] pitch={pitch:+.2f} neutral={neutral_pitch:+.2f} sig={signal:+.2f} norm={norm:+.2f}")
+                                        log(f"[scroll] pitch={pitch:+.2f} signal={signal:+.2f}")
                                         last_sdbg = now
                         elif SCROLL_ENABLE:
                             enter_count = 0; fist_count = 0             # no hand / frozen: reset the debounce
