@@ -52,6 +52,8 @@ SCROLL_NEUTRAL  = 0.05   # finger pitch that means "level / stop" (0 = horizonta
                          # tilting UP always has room to scroll up (no more capture-at-the-top dead zone).
 SCROLL_DEADZONE = 0.18   # +/- band around neutral that does nothing (bigger = wider, calmer "stop" zone)
 SCROLL_SPEED    = 10     # sensitivity: scroll ticks per frame at full finger tilt (higher = faster)
+SCROLL_UP_GAIN  = 2.0    # extra multiplier for UP only - tilting up has less physical range than down,
+                         # so scroll-up feels slower. Bump this to speed UP up without touching down.
 SCROLL_INVERT   = False  # True flips up/down
 SCROLL_EXIT_NOHAND = 2.0 # auto-exit scroll mode after this many seconds with no hand in view
 SHOW_BADGE      = True   # show the always-on-top mode badge (FROZEN / SCROLL / TALK / READY)
@@ -432,7 +434,8 @@ def main():
                                     if SCROLL_INVERT: signal = -signal
                                     mag = abs(signal)
                                     if mag > SCROLL_DEADZONE:
-                                        ticks_f = (mag - SCROLL_DEADZONE) * SCROLL_SPEED * (1 if signal > 0 else -1)
+                                        base = (mag - SCROLL_DEADZONE) * SCROLL_SPEED
+                                        ticks_f = base * SCROLL_UP_GAIN if signal > 0 else -base   # boost UP only
                                         scroll_accum += ticks_f
                                         ticks = int(scroll_accum)
                                         if ticks != 0:
