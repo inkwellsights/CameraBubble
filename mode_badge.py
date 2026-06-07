@@ -4,9 +4,9 @@ mode_badge.py - tiny always-on-top badge showing the gesture engine's current MO
 Launched automatically by gesture_control.py (when SHOW_BADGE is True). It reads
 _mode_status.txt (written atomically by the engine), shows a colored pill -
 FROZEN / SCROLL / TALK / READY - and, when ATTACH is on, follows the phone-cam window
-so the two move together. By default it sits just ABOVE the cam (so the cam can't cover
-it) and re-asserts topmost every tick. Drag it to reposition; the spot (relative to the
-cam) is remembered. It closes itself when the engine stops.
+and forces itself ABOVE it (the cam is also always-on-top, so the badge explicitly
+orders the cam just below itself every tick). Drag it to reposition; the spot (relative
+to the cam) is remembered. It closes itself when the engine stops.
 
 Robust by design: a bad/partial read is ignored (keeps the last state); it only closes
 when the engine's timestamp goes genuinely stale. Any error is logged to _badge_error.log.
@@ -23,7 +23,7 @@ MODE_FILE = os.path.join(_HERE, "_mode_status.txt")
 POS_FILE  = os.path.join(_HERE, "_badge_pos.txt")
 ERR_FILE  = os.path.join(_HERE, "_badge_error.log")
 
-ATTACH     = True                          # follow the phone-cam window so the badge moves with it
+ATTACH     = True                          # follow the phone-cam window and stay above it
 CAM_TITLES = ["PhoneCam", "PhoneBubble"]   # scrcpy rectangle, or the circular bubble
 
 # mode -> (background, foreground, label)
@@ -59,18 +59,19 @@ _u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c
                             ctypes.c_int, ctypes.c_int, wintypes.UINT]
 HWND_TOPMOST   = wintypes.HWND(-1)
 SWP_NOSIZE     = 0x0001
+SWP_NOMOVE     = 0x0002
 SWP_NOACTIVATE = 0x0010
 
 
-def cam_origin():
-    """Top-left (x, y) of the visible phone-cam window, or None."""
+def find_cam():
+    """Return (hwnd, left, top) of the visible phone-cam window, or None."""
     try:
         for title in CAM_TITLES:
             hwnd = _u.FindWindowW(None, title)
             if hwnd and _u.IsWindowVisible(hwnd):
                 r = wintypes.RECT()
                 if _u.GetWindowRect(hwnd, ctypes.byref(r)) and r.left < 4000 and r.top < 4000:
-                    return r.left, r.top     # (skip scrcpy's off-screen feed in bubble mode)
+                    return hwnd, r.left, r.top   # (skip scrcpy's off-screen feed in bubble mode)
     except Exception:
         pass
     return None
@@ -82,7 +83,7 @@ root.title("GestureMode")
 root.overrideredirect(True)
 root.attributes("-topmost", True)
 try:
-    root.attributes("-alpha", 0.93)
+    root.attributes("-alpha", 0.95)
 except Exception:
     pass
 
@@ -94,11 +95,10 @@ text = tk.Label(wrap, text=DEFAULT[2], font=("Segoe UI Semibold", 12, "bold"), b
 text.pack(side="left", padx=(0, 12), pady=5)
 root.update_idletasks()
 _badge_hwnd = root.winfo_id()
-_bh = root.winfo_height() or 34
 
 # off_x/off_y = where the badge sits relative to the cam's top-left.
-# default: just ABOVE the cam's top edge, left-aligned, so the cam can't cover it.
-off_x, off_y = 0, -(_bh + 4)
+# default: a small inset INSIDE the cam's top-left corner (now that we force it above the cam).
+off_x, off_y = 10, 10
 try:
     off_x, off_y = (int(v) for v in open(POS_FILE).read().split(","))
 except Exception:
@@ -106,10 +106,13 @@ except Exception:
 root.geometry(f"+{max(off_x, 0)}+{max(off_y, 0)}")   # placeholder until the first follow tick
 
 
-def place(x, y):
-    """Move the badge AND re-assert topmost (so the always-on-top cam can't cover it)."""
+def raise_above_cam(cam_hwnd, x, y):
+    """Move the badge to (x, y), keep it topmost, and order the cam just BELOW it."""
     try:
         _u.SetWindowPos(_badge_hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
+        if cam_hwnd:
+            # place the cam directly after (below) the badge in the z-order, so it can't cover it
+            _u.SetWindowPos(cam_hwnd, _badge_hwnd, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
     except Exception:
         root.geometry(f"+{x}+{y}")
 
@@ -123,9 +126,9 @@ def _move(e):
 def _up(e):
     global off_x, off_y
     _d["drag"] = False
-    org = cam_origin() if ATTACH else None
-    if org:
-        off_x, off_y = root.winfo_x() - org[0], root.winfo_y() - org[1]
+    cam = find_cam() if ATTACH else None
+    if cam:
+        off_x, off_y = root.winfo_x() - cam[1], root.winfo_y() - cam[2]
     elif not ATTACH:
         off_x, off_y = root.winfo_x(), root.winfo_y()
     else:
@@ -187,11 +190,11 @@ def tick():
     # close only when the engine has genuinely stopped updating (stale ts), past startup grace
     if now - last_good[0] > 5 and now - START > 5:
         root.destroy(); return
-    # follow the cam window + stay above it (unless you're mid-drag)
+    # follow the cam window + force the badge above it (unless you're mid-drag)
     if ATTACH and not _d["drag"]:
-        org = cam_origin()
-        if org:
-            place(org[0] + off_x, org[1] + off_y)
+        cam = find_cam()
+        if cam:
+            raise_above_cam(cam[0], cam[1] + off_x, cam[2] + off_y)
     root.after(80, tick)
 
 
