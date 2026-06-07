@@ -7,6 +7,10 @@ rotation.txt
 # Saved phone connect address from pairing (local, per-network)
 phone_addr.txt
 
+# Mode-badge runtime files (local)
+_mode_status.txt
+_badge_pos.txt
+
 # Python
 __pycache__/
 *.pyc

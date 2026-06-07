@@ -17,8 +17,10 @@ OpenCV, and [windows-capture](https://github.com/NiiightmareXD/windows-capture).
 | **`PhoneSuite.bat`** | Phone view **+** gesture control together (asks rectangle or bubble; rectangle default) |
 | **`PhoneWebcam.bat`** | Phone as a virtual webcam (Meet, Zoom, WhatsApp, Telegram, Discord…) |
 | **`PhoneFeed.bat`** | Just the hidden feed, for streaming/recording in OBS |
+| `Pair-Phone.bat` | One-time pairing for the wireless connection (Wi-Fi or Tailscale) |
 | `SetRotation.bat` | Set camera rotation (also asked at every launch) |
 | `Stop-PhoneSuite.bat` | Stop everything |
+| `mode_badge.py` | Always-on-top mode pill (auto-launched by the gesture engine) |
 | `mirror.py` | Standalone webcam-bubble (any DirectShow camera) |
 
 ## How it works
@@ -91,13 +93,21 @@ PhoneSuite.bat
 | 👍 Thumbs up | Stop recording; **when stopped**, send (Enter) |
 | ✌️ Victory | Snipping tool (Win+Shift+S) |
 | 👎 Thumbs down | Freeze / unfreeze all gesture scanning (move your hands freely) |
-| 🖖 Three fingers | Toggle scroll mode (index+middle+ring up, thumb+pinky tucked). Then drop to one finger and tilt up/down to scroll. Three fingers again to exit. |
+| 🤙 Shaka (enter) | Enter scroll mode (thumb + pinky out, middle three folded). Then point one finger and tilt up/down to scroll. |
+| ✊ Fist (in scroll) | Exit scroll mode. |
 
-**Scroll** is a joystick, not a drag: show three fingers to turn scroll mode on (a deliberate pose,
-so your hand can't trigger it by accident), then drop to one pointing finger and tilt it up to
-scroll up, down to scroll down, hold level to stop. Show three fingers again to exit. It scrolls
-whatever's under the mouse, so hover there first. Tune `SCROLL_SPEED`, `SCROLL_DEADZONE`, and
-`SCROLL_INVERT` at the top of `gesture_control.py`.
+**Scroll** is a joystick, not a drag: show the shaka sign (🤙) to enter scroll mode, then drop to one
+pointing finger and tilt it up to scroll up, down to scroll down, hold level to stop. Make a fist to
+exit. Entering and exiting use different gestures on purpose, so you always know which one you're
+doing. The enter pose is one line to change: `SCROLL_ENTER = "shaka"` (or `"iloveyou"` 🤟, a built-in
+trained gesture that's the most reliable, or `"three"`). It scrolls whatever's under the mouse, so
+hover there first. Tune `SCROLL_SPEED`, `SCROLL_DEADZONE`, and `SCROLL_INVERT` at the top of
+`gesture_control.py`.
+
+**Mode badge.** A small always-on-top pill shows the current mode so you never have to watch the
+console: **READY** (blue, palm to talk), **TALK** (green, recording), **SCROLL** (orange), **FROZEN**
+(gray, paused). Drag it onto your phone-cam view and it stays there. It launches with the gesture
+engine and closes with it. Turn it off with `SHOW_BADGE = False`.
 
 Sending is always a deliberate thumbs-up on a paused prompt — nothing auto-sends mid-dictation.
 Everything is configurable at the top of `gesture_control.py` (`DICTATION_MODE`, `HOLD_WINDOW`,

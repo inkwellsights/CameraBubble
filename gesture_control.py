@@ -13,7 +13,7 @@ starts it). Requires: mediapipe pyautogui opencv-python numpy windows-capture
 and gesture_recognizer.task next to this file.
 """
 
-import sys, time, threading, os, atexit, ctypes
+import sys, time, threading, os, atexit, ctypes, subprocess, shutil
 import numpy as np
 import cv2
 import mediapipe as mp
@@ -33,14 +33,18 @@ PAUSE_GESTURE = "Thumb_Down"  # toggles ALL scanning on/off (freeze, so you can 
                               # Same gesture freezes AND resumes - the engine keeps watching for THIS
                               # one even while frozen. Options: Thumb_Down, ILoveYou, Pointing_Up.
 
-# --- 3-finger TOGGLE, then index-finger JOYSTICK scroll ---
-# Show THREE fingers (index+middle+ring up, thumb+pinky tucked) to toggle scroll mode on/off.
-# It's a deliberate pose, so just moving your hand around won't trigger it. Once on, drop to a
-# single pointing finger and tilt it UP to scroll up, DOWN to scroll down, hold level to stop -
-# like a joystick. Show three fingers again to EXIT. It reads finger TILT (tip vs knuckle), so
-# moving your whole hand doesn't scroll. Scrolls whatever is under the mouse, so hover there first.
+# --- ENTER scroll with a distinct pose, EXIT with a fist, JOYSTICK with one finger ---
+# A deliberate pose ENTERS scroll mode (chosen so it does NOT clash with the dictation gestures).
+# Once in, drop to a single pointing finger and tilt UP to scroll up, DOWN to scroll down, level =
+# stop. Make a FIST to leave scroll mode. It reads finger TILT (tip vs knuckle), so moving your
+# whole hand doesn't scroll. Scrolls whatever's under the mouse, so hover there first.
 SCROLL_ENABLE   = True
-TOGGLE_FRAMES   = 3      # hold the 3-finger pose this many frames to flip scroll mode (debounce)
+SCROLL_ENTER    = "shaka"  # which pose ENTERS scroll mode (one-line swap to test alternatives):
+                           #   "shaka"    = thumb + pinky out, middle three folded  (default; far from palm)
+                           #   "iloveyou" = thumb + index + pinky  (a built-in TRAINED gesture; most reliable)
+                           #   "three"    = index + middle + ring up, pinky down
+ENTER_FRAMES    = 3      # hold the enter pose this many frames before scroll engages (debounce)
+EXIT_FRAMES     = 3      # hold a fist this many frames to leave scroll mode
 SCROLL_DEADZONE = 0.05   # normalized signal must exceed this to scroll (lower = more sensitive to small tilts)
 SCROLL_SPEED    = 10     # sensitivity: scroll ticks per frame at full finger tilt (higher = faster)
 SCROLL_UP_BOOST = 3.0    # extra gain for UP direction: from a natural pointing-up rest the physical
@@ -48,6 +52,7 @@ SCROLL_UP_BOOST = 3.0    # extra gain for UP direction: from a natural pointing-
                          # If up overshoots, dial this DOWN. If still slow, dial UP.
 SCROLL_INVERT   = False  # True flips up/down
 SCROLL_EXIT_NOHAND = 2.0 # auto-exit scroll mode after this many seconds with no hand in view
+SHOW_BADGE      = True   # show the always-on-top mode badge (FROZEN / SCROLL / TALK / READY)
 COOLDOWN      = 1.2      # seconds before the same tap action can fire again
 MAX_HOLD      = 120      # safety: hard cap - auto-release any latched key after N seconds
 NOHAND_RELEASE = 45      # safety: release latched keys after N seconds with NO gesture seen
@@ -174,6 +179,46 @@ except Exception:
     pass
 
 
+# --- mode badge (separate always-on-top window) + the status file it reads ---
+_HERE      = os.path.dirname(os.path.abspath(__file__))
+MODE_FILE  = os.path.join(_HERE, "_mode_status.txt")
+BADGE_PATH = os.path.join(_HERE, "mode_badge.py")
+_badge_proc = None
+
+
+def write_mode(mode, ts):
+    try:
+        with open(MODE_FILE, "w") as f:
+            f.write(f"{mode}\n{ts:.0f}")
+    except Exception:
+        pass
+
+
+def start_badge():
+    global _badge_proc
+    if not SHOW_BADGE:
+        return
+    try:
+        pyw = shutil.which("pythonw") or sys.executable
+        _badge_proc = subprocess.Popen([pyw, BADGE_PATH],
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception as e:
+        log(f"badge launch failed: {e}")
+
+
+def stop_badge():
+    global _badge_proc
+    if _badge_proc:
+        try:
+            _badge_proc.terminate()
+        except Exception:
+            pass
+        _badge_proc = None
+
+
+atexit.register(stop_badge)
+
+
 class FrameGrabber:
     def __init__(self, window_name):
         self.window_name = window_name
@@ -238,8 +283,9 @@ def main():
             print(f"    {g:<12} -> {s['desc']}")
     print(f"    {PAUSE_GESTURE:<12} -> FREEZE / UNFREEZE all scanning")
     if SCROLL_ENABLE:
-        print("    3 fingers    -> toggle SCROLL mode (index+middle+ring UP, thumb+pinky DOWN)")
-        print("                    then drop to 1 finger, tilt UP/DOWN to scroll; 3 fingers again to exit")
+        _enter = {"shaka": "Shaka (thumb+pinky out)", "iloveyou": "ILoveYou sign", "three": "3 fingers up"}.get(SCROLL_ENTER, SCROLL_ENTER)
+        print(f"    {_enter}  -> ENTER scroll; then point 1 finger, tilt UP/DOWN to scroll")
+        print("    Fist (while scrolling)    -> EXIT scroll")
     print("  Ctrl+C to quit.")
     print("=" * 56)
 
@@ -264,13 +310,18 @@ def main():
     last_infer = 0.0
     infer_period = 1.0 / INFER_FPS
     paused = False              # when True, all gesture actions are frozen (toggle with PAUSE_GESTURE)
-    scroll_mode = False         # index-finger scroll joystick engaged (a 3-finger pose toggles it)
-    three_count = 0             # consecutive frames the 3-finger pose has been held (debounce)
-    three_armed = False         # already toggled this hold; must drop the pose before it can fire again
+    scroll_mode = False         # scroll joystick engaged (enter pose turns on, fist turns off)
+    enter_count = 0             # consecutive frames the enter pose has been held (debounce)
+    fist_count = 0              # consecutive frames a fist has been held in scroll mode (to exit)
     neutral_pitch = None        # finger pitch captured as the "rest" point when scroll mode starts
     scroll_accum = 0.0          # fractional scroll carry-over
     last_hand = time.time()     # last time a hand was seen (for scroll-mode auto-exit)
     last_sdbg = 0.0             # scroll debug throttle
+    cur_mode = None             # last mode written to the badge status file
+    last_mode_write = 0.0       # heartbeat throttle for the status file
+
+    write_mode("READY", time.time())   # seed the status file, then bring up the badge
+    start_badge()
     try:
         while True:
             now = time.time()
@@ -327,66 +378,76 @@ def main():
                             log(f"[dbg] hands={len(res.gestures or [])} raw=[{', '.join(raws)}] accepted={g}")
                             last_dbg = now
 
-                        # --- 3-finger pose toggles scroll mode; then index finger is a scroll joystick ---
+                        # --- ENTER scroll with a pose (shaka/iloveyou/three), EXIT with a fist; 1-finger joystick ---
+                        enter_pose = False
                         if SCROLL_ENABLE and not paused and res.hand_landmarks:
                             lm = res.hand_landmarks[0]
                             last_hand = now
                             d = lambda a, b: ((lm[a].x - lm[b].x) ** 2 + (lm[a].y - lm[b].y) ** 2) ** 0.5
                             palm = d(0, 9) + 1e-6                       # wrist -> middle knuckle (scale ref)
-                            ext = lambda tip, mcp: d(tip, mcp) / palm > 0.30   # finger extended (tip far from its knuckle)
-                            index_up  = ext(8, 5)
-                            middle_up = ext(12, 9)
-                            ring_up   = ext(16, 13)
-                            pinky_up  = ext(20, 17)
-                            thumb_out = d(4, 5) / palm > 0.40           # thumb sticking out (vs tucked across palm)
-                            three_finger = index_up and middle_up and ring_up and not pinky_up and not thumb_out
+                            ext = lambda tip, pip: d(tip, 0) > d(pip, 0)   # tip farther from wrist than its PIP = extended
+                            index_up  = ext(8, 6)
+                            middle_up = ext(12, 10)
+                            ring_up   = ext(16, 14)
+                            pinky_up  = ext(20, 18)
+                            if SCROLL_ENTER == "iloveyou":
+                                enter_pose = (g == "ILoveYou")          # built-in trained gesture (most reliable)
+                            elif SCROLL_ENTER == "three":
+                                enter_pose = index_up and middle_up and ring_up and not pinky_up
+                            else:                                       # "shaka": pinky out, middle three folded
+                                enter_pose = pinky_up and not index_up and not middle_up and not ring_up
 
-                            # debounced rising edge: hold the 3-finger pose TOGGLE_FRAMES in a row to flip
-                            if three_finger:
-                                three_count += 1
-                                if three_count >= TOGGLE_FRAMES and not three_armed:
-                                    three_armed = True                  # don't re-toggle until pose drops
-                                    scroll_mode = not scroll_mode
-                                    if scroll_mode:
+                            if not scroll_mode:
+                                # ENTER: hold the enter pose a few frames
+                                if enter_pose:
+                                    enter_count += 1
+                                    if enter_count >= ENTER_FRAMES:
+                                        scroll_mode = True
                                         neutral_pitch = None; scroll_accum = 0.0
                                         last_palm = 0.0                 # close any open dictation window
-                                        log("SCROLL MODE ON - drop to 1 finger, tilt UP/DOWN to scroll; 3 fingers again to exit")
-                                    else:
-                                        log("scroll mode off")
-                            else:
-                                three_count = 0
-                                three_armed = False
-
-                            # joystick: only scroll while pointing (index extended AND not still showing 3 fingers)
-                            if scroll_mode and not three_finger and index_up:
-                                pitch = (lm[5].y - lm[8].y) / palm      # + when fingertip is ABOVE the knuckle
-                                if neutral_pitch is None:
-                                    neutral_pitch = pitch               # wherever you hold it now = rest
-                                    log(f"scroll neutral = {pitch:+.2f}  (a high value means finger pointed nearly straight up; tilt back a little if up scroll feels stuck)")
-                                signal = pitch - neutral_pitch
-                                if SCROLL_INVERT: signal = -signal
-                                # Asymmetric normalization + UP boost: from a pointing-up rest the physical
-                                # UP range is tiny while DOWN range is huge. Divide by remaining range AND
-                                # boost the up signal so subtle upward tilts produce real scroll speed.
-                                up_range = max(0.15, 1.05 - neutral_pitch)
-                                dn_range = max(0.15, neutral_pitch + 1.05)
-                                if signal > 0:
-                                    norm = (signal / up_range) * SCROLL_UP_BOOST
+                                        log("SCROLL MODE ON - point 1 finger, tilt UP/DOWN to scroll; FIST to exit")
                                 else:
-                                    norm = signal / dn_range
-                                mag = abs(norm)
-                                if mag > SCROLL_DEADZONE:
-                                    ticks_f = (mag - SCROLL_DEADZONE) * SCROLL_SPEED * (1 if norm > 0 else -1)
-                                    scroll_accum += ticks_f
-                                    ticks = int(scroll_accum)
-                                    if ticks != 0:
-                                        if not DRY: pyautogui.scroll(ticks)
-                                        scroll_accum -= ticks
-                                if DEBUG and now - last_sdbg > 0.3:
-                                    log(f"[scroll] pitch={pitch:+.2f} neutral={neutral_pitch:+.2f} sig={signal:+.2f} norm={norm:+.2f}")
-                                    last_sdbg = now
+                                    enter_count = 0
+                                fist_count = 0
+                            else:
+                                enter_count = 0
+                                # EXIT: a fist held a few frames
+                                if g == "Closed_Fist":
+                                    fist_count += 1
+                                    if fist_count >= EXIT_FRAMES:
+                                        scroll_mode = False; fist_count = 0
+                                        prev = "Closed_Fist"; fired = True   # the exit-fist must NOT also fire a dictation action
+                                        log("scroll mode off (fist)")
+                                else:
+                                    fist_count = 0
+                                # JOYSTICK: only while pointing (index up, and not holding the enter pose)
+                                if scroll_mode and index_up and not enter_pose:
+                                    pitch = (lm[5].y - lm[8].y) / palm  # + when fingertip is ABOVE the knuckle
+                                    if neutral_pitch is None:
+                                        neutral_pitch = pitch           # wherever you hold it now = rest
+                                        log(f"scroll neutral = {pitch:+.2f}")
+                                    signal = pitch - neutral_pitch
+                                    if SCROLL_INVERT: signal = -signal
+                                    # Asymmetric normalization + UP boost (a pointing-up rest leaves little UP range)
+                                    up_range = max(0.15, 1.05 - neutral_pitch)
+                                    dn_range = max(0.15, neutral_pitch + 1.05)
+                                    if signal > 0:
+                                        norm = (signal / up_range) * SCROLL_UP_BOOST
+                                    else:
+                                        norm = signal / dn_range
+                                    mag = abs(norm)
+                                    if mag > SCROLL_DEADZONE:
+                                        ticks_f = (mag - SCROLL_DEADZONE) * SCROLL_SPEED * (1 if norm > 0 else -1)
+                                        scroll_accum += ticks_f
+                                        ticks = int(scroll_accum)
+                                        if ticks != 0:
+                                            if not DRY: pyautogui.scroll(ticks)
+                                            scroll_accum -= ticks
+                                    if DEBUG and now - last_sdbg > 0.3:
+                                        log(f"[scroll] pitch={pitch:+.2f} neutral={neutral_pitch:+.2f} sig={signal:+.2f} norm={norm:+.2f}")
+                                        last_sdbg = now
                         elif SCROLL_ENABLE:
-                            three_count = 0; three_armed = False        # no hand / frozen: reset the toggle debounce
+                            enter_count = 0; fist_count = 0             # no hand / frozen: reset the debounce
 
                         if g == prev:
                             stable += 1
@@ -397,8 +458,8 @@ def main():
                         if DICTATION_MODE == "hold" and not paused and not scroll_mode and g == "Open_Palm":
                             last_palm = now                             # (re)open the window
 
-                        # --- gesture transitions (fire once per gesture streak; not while pinch-scrolling) ---
-                        if stable >= STABLE_FRAMES and not fired and g != "None" and not scroll_mode:
+                        # --- gesture transitions (fire once per gesture streak; not while scrolling) ---
+                        if stable >= STABLE_FRAMES and not fired and g != "None" and not scroll_mode and not enter_pose:
                             fired = True
                             if g == PAUSE_GESTURE:                      # freeze/unfreeze everything
                                 paused = not paused
@@ -434,7 +495,7 @@ def main():
 
             # auto-exit scroll mode if the hand leaves view (so it can't get stuck on)
             if SCROLL_ENABLE and scroll_mode and now - last_hand > SCROLL_EXIT_NOHAND:
-                scroll_mode = False; three_count = 0; three_armed = False
+                scroll_mode = False; enter_count = 0; fist_count = 0
                 log("scroll mode auto-exit (no hand)")
 
             # safety auto-release of latched keys
@@ -454,11 +515,20 @@ def main():
                 log(f"[hb] alive  frames_in={grab.count} ({fps:.0f}/s)  infer={loops}  current={prev}{state}")
                 last_hb, last_count = now, grab.count
 
+            # --- update the mode badge (write on change, plus a ~1s liveness heartbeat) ---
+            mode_now = "FROZEN" if paused else ("SCROLL" if scroll_mode else ("TALK" if streaming else "READY"))
+            if mode_now != cur_mode or now - last_mode_write > 1.0:
+                cur_mode = mode_now
+                write_mode(mode_now, now)
+                last_mode_write = now
+
             time.sleep(0.008)
     except KeyboardInterrupt:
         pass
     finally:
         release_all()
+        write_mode("OFF", time.time())
+        stop_badge()
         print("\nGesture control stopped.")
 
 
