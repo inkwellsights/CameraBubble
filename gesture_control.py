@@ -27,8 +27,13 @@ WINDOW_NAME   = "PhoneCam"
 MODEL_PATH    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gesture_recognizer.task")
 MIN_SCORE     = 0.45     # min confidence to accept a gesture (lower = catches marginal palms faster)
 STABLE_FRAMES = 3        # gesture must persist this many frames before it fires
-INFER_FPS     = 15       # cap gesture recognition to this many frames/sec (big CPU saver; 30 not needed)
-INFER_WIDTH   = 640      # downscale frames to this width before recognition (CPU saver)
+INFER_FPS     = 15       # gesture recognition FPS while a hand is in view (responsive)
+IDLE_FPS      = 4        # throttle DOWN to this when no hand has been seen for IDLE_AFTER seconds.
+                         # The big heat saver: most of the time you're not gesturing, so there's no point
+                         # running the detector at full speed. It wakes back to INFER_FPS the instant a
+                         # hand appears (~1 idle frame of lag). Set equal to INFER_FPS to disable.
+IDLE_AFTER    = 3.0      # seconds with no hand before dropping to IDLE_FPS
+INFER_WIDTH   = 640      # downscale frames to this width before recognition (CPU saver; lower = cheaper)
 PAUSE_GESTURE = "Thumb_Down"  # toggles ALL scanning on/off (freeze, so you can move your hands freely).
                               # Same gesture freezes AND resumes - the engine keeps watching for THIS
                               # one even while frozen. Options: Thumb_Down, ILoveYou, Pointing_Up.
@@ -346,7 +351,13 @@ def main():
                     streaming = False
                     log("dictation OFF (window closed - words transcribed; thumbs-up to send)")
 
-            # --- gesture recognition: throttled to INFER_FPS + downscaled (the CPU saver) ---
+            # adaptive throttle: full speed while you're interacting, idle FPS when no hand has been
+            # around for a few seconds. This is the big CPU/heat saver - no sense running the detector
+            # at 15fps while you're just working. It wakes the instant a hand reappears.
+            active_now = (now - last_hand < IDLE_AFTER) or streaming or scroll_mode
+            infer_period = 1.0 / (INFER_FPS if active_now else IDLE_FPS)
+
+            # --- gesture recognition: throttled + downscaled (the CPU saver) ---
             if now - last_infer >= infer_period:
                 last_infer = now
                 frame = grab.get()
@@ -509,8 +520,9 @@ def main():
             # heartbeat every 3s
             if now - last_hb >= 3:
                 fps = (grab.count - last_count) / (now - last_hb)
+                throttle = "active" if active_now else "idle"
                 state = " [FROZEN]" if paused else (" [SCROLL]" if scroll_mode else "")
-                log(f"[hb] alive  frames_in={grab.count} ({fps:.0f}/s)  infer={loops}  current={prev}{state}")
+                log(f"[hb] alive  frames_in={grab.count} ({fps:.0f}/s)  infer={loops} ({throttle})  current={prev}{state}")
                 last_hb, last_count = now, grab.count
 
             # --- update the mode badge (write on change, plus a ~1s liveness heartbeat) ---
