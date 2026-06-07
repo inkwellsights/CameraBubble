@@ -39,10 +39,12 @@ PAUSE_GESTURE = "Thumb_Down"  # toggles ALL scanning on/off (freeze, so you can 
 # stop. Make a FIST to leave scroll mode. It reads finger TILT (tip vs knuckle), so moving your
 # whole hand doesn't scroll. Scrolls whatever's under the mouse, so hover there first.
 SCROLL_ENABLE   = True
-SCROLL_ENTER    = "shaka"  # which pose ENTERS scroll mode (one-line swap to test alternatives):
-                           #   "shaka"    = thumb + pinky out, middle three folded  (default; far from palm)
-                           #   "iloveyou" = thumb + index + pinky  (a built-in TRAINED gesture; most reliable)
-                           #   "three"    = index + middle + ring up, pinky down
+SCROLL_ENTER    = "iloveyou"  # which pose ENTERS scroll mode (one-line swap):
+                           #   "iloveyou" = thumb + index + pinky (the rock sign) - a built-in TRAINED gesture,
+                           #                so it detects as reliably as palm/fist/thumbs. DEFAULT, because the
+                           #                landmark-based poses below are jittery on this camera.
+                           #   "shaka"    = thumb + pinky out, middle three folded   (homemade landmark detection)
+                           #   "three"    = index + middle + ring up, pinky down     (homemade landmark detection)
 ENTER_FRAMES    = 3      # hold the enter pose this many frames before scroll engages (debounce)
 EXIT_FRAMES     = 3      # hold a fist this many frames to leave scroll mode
 SCROLL_DEADZONE = 0.05   # normalized signal must exceed this to scroll (lower = more sensitive to small tilts)
@@ -283,7 +285,7 @@ def main():
             print(f"    {g:<12} -> {s['desc']}")
     print(f"    {PAUSE_GESTURE:<12} -> FREEZE / UNFREEZE all scanning")
     if SCROLL_ENABLE:
-        _enter = {"shaka": "Shaka (thumb+pinky out)", "iloveyou": "ILoveYou sign", "three": "3 fingers up"}.get(SCROLL_ENTER, SCROLL_ENTER)
+        _enter = {"shaka": "Shaka (thumb+pinky out)", "iloveyou": "Rock sign (thumb+index+pinky)", "three": "3 fingers up"}.get(SCROLL_ENTER, SCROLL_ENTER)
         print(f"    {_enter}  -> ENTER scroll; then point 1 finger, tilt UP/DOWN to scroll")
         print("    Fist (while scrolling)    -> EXIT scroll")
     print("  Ctrl+C to quit.")
