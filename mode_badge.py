@@ -58,6 +58,7 @@ _u.SetWindowPos.restype = wintypes.BOOL
 _u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                             ctypes.c_int, ctypes.c_int, wintypes.UINT]
 HWND_TOPMOST   = wintypes.HWND(-1)
+HWND_TOP       = wintypes.HWND(0)
 SWP_NOSIZE     = 0x0001
 SWP_NOMOVE     = 0x0002
 SWP_NOACTIVATE = 0x0010
@@ -97,8 +98,10 @@ root.update_idletasks()
 _badge_hwnd = root.winfo_id()
 
 # off_x/off_y = where the badge sits relative to the cam's top-left.
-# default: a small inset INSIDE the cam's top-left corner (now that we force it above the cam).
-off_x, off_y = 10, 10
+# default: just ABOVE the cam's top edge (no overlap = always visible; sidesteps the z-order fight
+# with the video window's always-on-top). It still moves as one piece with the cam.
+_bh = root.winfo_height() or 34
+off_x, off_y = 0, -(_bh + 2)
 try:
     off_x, off_y = (int(v) for v in open(POS_FILE).read().split(","))
 except Exception:
@@ -107,12 +110,13 @@ root.geometry(f"+{max(off_x, 0)}+{max(off_y, 0)}")   # placeholder until the fir
 
 
 def raise_above_cam(cam_hwnd, x, y):
-    """Move the badge to (x, y), keep it topmost, and order the cam just BELOW it."""
+    """Move the badge to (x, y) and make sure it sits ABOVE the cam in the z-order."""
     try:
         _u.SetWindowPos(_badge_hwnd, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE)
         if cam_hwnd:
-            # place the cam directly after (below) the badge in the z-order, so it can't cover it
+            # belt: order the cam directly below the badge; suspenders: bring the badge to the front
             _u.SetWindowPos(cam_hwnd, _badge_hwnd, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+            _u.SetWindowPos(_badge_hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
     except Exception:
         root.geometry(f"+{x}+{y}")
 
@@ -194,7 +198,7 @@ def tick():
     if ATTACH and not _d["drag"]:
         cam = find_cam()
         if cam:
-            raise_above_cam(cam[0], cam[1] + off_x, cam[2] + off_y)
+            raise_above_cam(cam[0], max(cam[1] + off_x, 0), max(cam[2] + off_y, 0))
     root.after(80, tick)
 
 
