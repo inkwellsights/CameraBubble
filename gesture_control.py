@@ -34,6 +34,19 @@ IDLE_FPS      = 4        # throttle DOWN to this when no hand has been seen for 
                          # hand appears (~1 idle frame of lag). Set equal to INFER_FPS to disable.
 IDLE_AFTER    = 3.0      # seconds with no hand before dropping to IDLE_FPS
 INFER_WIDTH   = 640      # downscale frames to this width before recognition (CPU saver; lower = cheaper)
+
+# ---- single controller: lock gestures to ONE person's ONE hand ----
+# Other people in frame (or your other hand) can't drive anything. The first matching hand seen
+# becomes "the controller" for the whole session; only its gestures fire. When it leaves the frame
+# the engine PARKS (nothing fires) until a matching hand returns. Restart the engine to re-lock.
+SINGLE_CONTROLLER   = True
+CONTROL_HAND        = "right"  # which of YOUR hands controls: "right", "left", or "any"
+REAR_CAM_UNMIRRORED = False    # MediaPipe reads handedness as if the image were a selfie (mirrored).
+                               # False = your feed IS mirrored (physical right -> "Right", this setup).
+                               # True  = un-mirrored feed (physical right would otherwise report "Left").
+                               # If it ever grabs the wrong hand, flip this. (Ignored when "any".)
+MAX_HANDS           = 3        # detect up to this many hands so bystanders are SEEN and rejected,
+                               # not accidentally chosen. Higher = a little more CPU.
 PAUSE_GESTURE = "Thumb_Down"  # toggles ALL scanning on/off (freeze, so you can move your hands freely).
                               # Same gesture freezes AND resumes - the engine keeps watching for THIS
                               # one even while frozen. Options: Thumb_Down, ILoveYou, Pointing_Up.
@@ -156,6 +169,18 @@ last_fire = {}     # gesture -> last tap fire time
 
 def log(msg):
     print(time.strftime("%H:%M:%S "), msg, flush=True)
+
+
+def _control_label():
+    """MediaPipe handedness label for YOUR chosen control hand (None = accept any).
+    MediaPipe labels handedness assuming a mirrored (selfie) image; an un-mirrored rear cam
+    flips it, so your physical right shows up as 'Left'."""
+    if CONTROL_HAND == "any":
+        return None
+    physical = "Right" if CONTROL_HAND.lower().startswith("r") else "Left"
+    if REAR_CAM_UNMIRRORED:
+        return "Left" if physical == "Right" else "Right"
+    return physical
 
 
 def dispatch(gesture, bindings=None):
@@ -294,7 +319,7 @@ def main():
     opts = vision.GestureRecognizerOptions(
         base_options=mptasks.BaseOptions(model_asset_path=MODEL_PATH),
         running_mode=vision.RunningMode.VIDEO,
-        num_hands=2,                          # catch either hand (we scan all slots below)
+        num_hands=MAX_HANDS,                  # see several hands so bystanders can be rejected, not picked
         min_hand_detection_confidence=0.5,    # default - lower invited phantom hands
         min_hand_presence_confidence=0.5,
         min_tracking_confidence=0.5,
@@ -307,6 +332,8 @@ def main():
     print("=" * 56)
     print(f"  GESTURE CONTROL{'  [DRY-RUN: no keys pressed]' if DRY else ''}")
     print(f"  Dictation mode: {DICTATION_MODE.upper()}")
+    if SINGLE_CONTROLLER:
+        print(f"  Controller: {CONTROL_HAND.upper()} hand only, one person (run with --debug to verify handedness)")
     print("  Show these to the phone camera:")
     if DICTATION_MODE == "hold":
         print(f"    Open_Palm    -> talk for {int(HOLD_WINDOW)}s (re-show palm to extend)")
@@ -362,6 +389,9 @@ def main():
     last_sdbg = 0.0             # scroll debug throttle
     cur_mode = None             # last mode written to the badge status file
     last_mode_write = 0.0       # heartbeat throttle for the status file
+    ctrl_active = False         # single-controller: a controller hand is locked for this session
+    ctrl_cx, ctrl_cy = 0.5, 0.5 # its last palm-centre (normalized), for frame-to-frame tracking
+    want_label = _control_label()  # MediaPipe handedness label to accept (None = any)
 
     write_mode("READY", time.time())   # seed the status file, then bring up the badge
     start_badge()
@@ -413,24 +443,56 @@ def main():
 
                     if res is not None:
                         loops += 1
-                        # Scan ALL detected hands; take the best NAMED gesture (multi-hand slot fix).
-                        g = "None"; score = 0.0
-                        for hand_gestures in (res.gestures or []):
-                            if not hand_gestures:
-                                continue
-                            cat = hand_gestures[0]
-                            if cat.category_name not in ("None", "") and cat.score >= MIN_SCORE and cat.score > score:
-                                g, score = cat.category_name, cat.score
+                        hands_lm = res.hand_landmarks or []
+                        hands_g  = res.gestures or []
+                        hands_hd = res.handedness or []
+
+                        # --- pick the ONE controller hand; only ITS gesture/landmarks drive anything ---
+                        # ctrl_lm = the controller's landmarks (None when it isn't in frame -> engine parks).
+                        ctrl_idx = None
+                        g = "None"; score = 0.0; ctrl_lm = None
+                        if SINGLE_CONTROLLER:
+                            cands = []   # (idx, centre_x, centre_y, size) for hands of the chosen handedness
+                            for i in range(len(hands_lm)):
+                                lab = hands_hd[i][0].category_name if i < len(hands_hd) and hands_hd[i] else None
+                                if want_label is None or lab == want_label:
+                                    lm = hands_lm[i]
+                                    size = ((lm[0].x - lm[9].x) ** 2 + (lm[0].y - lm[9].y) ** 2) ** 0.5  # bigger = closer
+                                    cands.append((i, lm[9].x, lm[9].y, size))
+                            if cands:
+                                if not ctrl_active:
+                                    pick = max(cands, key=lambda c: c[3])   # first session controller = closest hand
+                                    ctrl_active = True
+                                else:
+                                    pick = min(cands, key=lambda c: (c[1] - ctrl_cx) ** 2 + (c[2] - ctrl_cy) ** 2)  # same hand
+                                ctrl_idx, ctrl_cx, ctrl_cy = pick[0], pick[1], pick[2]
+                                ctrl_lm = hands_lm[ctrl_idx]
+                                if ctrl_idx < len(hands_g) and hands_g[ctrl_idx]:
+                                    cat = hands_g[ctrl_idx][0]
+                                    if cat.category_name not in ("None", "") and cat.score >= MIN_SCORE:
+                                        g, score = cat.category_name, cat.score
+                            # else: controller hand not in frame -> ctrl_lm stays None, nothing fires
+                        else:
+                            # legacy: best NAMED gesture across any hand; landmarks from hand 0
+                            for i in range(len(hands_g)):
+                                if hands_g[i] and hands_g[i][0].category_name not in ("None", "") \
+                                   and hands_g[i][0].score >= MIN_SCORE and hands_g[i][0].score > score:
+                                    g, score, ctrl_idx = hands_g[i][0].category_name, hands_g[i][0].score, i
+                            ctrl_lm = hands_lm[0] if hands_lm else None
 
                         if DEBUG and now - last_dbg > 0.3:
-                            raws = [f"{hg[0].category_name}:{hg[0].score:.2f}" for hg in (res.gestures or []) if hg]
-                            log(f"[dbg] hands={len(res.gestures or [])} raw=[{', '.join(raws)}] accepted={g}")
+                            parts = []
+                            for i in range(len(hands_lm)):
+                                gg = hands_g[i][0].category_name if i < len(hands_g) and hands_g[i] else "?"
+                                hd = hands_hd[i][0].category_name if i < len(hands_hd) and hands_hd[i] else "?"
+                                parts.append(f"{'*' if i == ctrl_idx else ' '}{i}:{hd}/{gg}")
+                            log(f"[dbg] hands={len(hands_lm)} [{', '.join(parts)}] ctrl={ctrl_idx} g={g}")
                             last_dbg = now
 
                         # --- ENTER scroll with a pose (shaka/iloveyou/three), EXIT with a fist; 1-finger joystick ---
                         enter_pose = False
-                        if SCROLL_ENABLE and not paused and not cmd_mode and res.hand_landmarks:
-                            lm = res.hand_landmarks[0]
+                        if SCROLL_ENABLE and not paused and not cmd_mode and ctrl_lm is not None:
+                            lm = ctrl_lm
                             last_hand = now
                             d = lambda a, b: ((lm[a].x - lm[b].x) ** 2 + (lm[a].y - lm[b].y) ** 2) ** 0.5
                             palm = d(0, 9) + 1e-6                       # wrist -> middle knuckle (scale ref)
@@ -495,7 +557,7 @@ def main():
                         # Built like scroll mode (its own enter/exit debounce). Mutually exclusive with scroll:
                         # gated off while scroll is on, and it gates scroll off while it is on.
                         if CMD_ENABLE and not paused and not scroll_mode:
-                            if res.hand_landmarks:
+                            if ctrl_lm is not None:
                                 last_hand = now
                             if not cmd_mode:
                                 # ENTER: hold one finger straight up a few frames
@@ -514,8 +576,8 @@ def main():
                                 # NAVIGATE the held Alt+Tab switcher by WHOLE-HAND horizontal position
                                 # (fixed centre, like the scroll joystick). Skipped while a fist is forming
                                 # so the commit-fist doesn't also step the highlight.
-                                if switcher_open and res.hand_landmarks and g != "Closed_Fist":
-                                    hand_x = res.hand_landmarks[0][9].x      # middle knuckle = hand centre (0..1)
+                                if switcher_open and ctrl_lm is not None and g != "Closed_Fist":
+                                    hand_x = ctrl_lm[9].x                    # middle knuckle = hand centre (0..1)
                                     off = (CMD_TAB_CENTER - hand_x) if CMD_TAB_INVERT else (hand_x - CMD_TAB_CENTER)
                                     if abs(off) > CMD_TAB_DEADZONE and now - last_tab_step >= CMD_TAB_INTERVAL:
                                         if not DRY:
