@@ -1,0 +1,43 @@
+CameraBubble - Gesture Cheat Sheet
+==================================
+Show these to the phone camera (rear cam, pointed at your hand).
+
+CONTROLLER: your RIGHT hand only.
+  The closest right hand locks in as the controller for the whole session.
+  Your left hand and anyone else's hands are ignored. If your right hand
+  leaves the frame, nothing fires until it comes back.
+  (Change at the top of gesture_control.py: CONTROL_HAND, SINGLE_CONTROLLER,
+   REAR_CAM_UNMIRRORED if it ever grabs the wrong hand.)
+
+DICTATION  (hold mode - must match Claude Code's /voice hold)
+  Open palm ........... Start talking. Opens a 30s window; re-show palm to extend.
+  Fist ................ Stop recording. When already stopped: insert newline(s).
+  Thumbs up ........... Stop recording. When already stopped: SEND (Enter).
+  Victory (2 fingers) . Snipping tool (Win+Shift+S).
+  Thumbs down ......... FREEZE / UNFREEZE all gesture scanning (move freely).
+
+SCROLL  (a joystick, not a drag)
+  Rock sign ........... ENTER scroll mode (thumb + index + pinky out).
+  1 finger, tilt UP ... Scroll up.   Tilt DOWN: scroll down.   Level: stop.
+  Fist ................ EXIT scroll mode.
+  Scrolls whatever is under the mouse, so hover there first.
+
+COMMAND  (OS shortcuts)
+  Point 1 finger up ... ENTER command mode.
+  Victory ............. Copy (Ctrl+C).
+  Open palm ........... Paste (Ctrl+V).
+  Thumbs up ........... Open the Alt+Tab switcher and keep it up; move your
+                        WHOLE hand right/left to step through open windows.
+  Fist ................ Pick the highlighted window / EXIT command mode.
+
+NOTES
+  - The gesture engine's dictation mode must match Claude Code's /voice mode
+    (hold <-> /voice hold, tap <-> /voice tap). Set DICTATION_MODE in
+    gesture_control.py.
+  - Keystrokes go to whatever window is focused. Keep your target focused.
+  - Run with --dry to test (logs detections, presses no keys); add --debug to
+    see which hand is the controller (* marks it).
+  - Built-in gesture names: Open_Palm, Closed_Fist, Thumb_Up, Thumb_Down,
+    Victory, Pointing_Up, ILoveYou.
+
+Launch:  PhoneSuite.bat (cam + gestures)  |  GestureControl.bat (gestures only)
